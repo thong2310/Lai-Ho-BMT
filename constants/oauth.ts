@@ -1,6 +1,6 @@
 import * as Linking from "expo-linking";
 import * as SecureStore from "expo-secure-store";
-import Constants from "expo-constants";
+import Constants, { ExecutionEnvironment } from "expo-constants";
 import * as ReactNative from "react-native";
 
 // Extract scheme from bundle ID (last segment timestamp, prefixed with "manus")
@@ -33,6 +33,17 @@ export const OWNER_NAME = env.ownerName;
 export const API_BASE_URL = env.apiBaseUrl;
 export const PENDING_OAUTH_STATE_KEY = "manus_pending_oauth_state";
 
+function isExpoGo(): boolean {
+  return Constants.executionEnvironment === ExecutionEnvironment.StoreClient;
+}
+
+/** Expo Go owns the exp/exps scheme; standalone builds own the project scheme. */
+export function getNativeRedirectUri(): string {
+  return isExpoGo()
+    ? Linking.createURL("/oauth/callback")
+    : Linking.createURL("/oauth/callback", { scheme: env.deepLinkScheme });
+}
+
 /**
  * Get the API base URL, deriving from current hostname if not set.
  * Metro runs on 8081, API server runs on 3000.
@@ -62,7 +73,7 @@ export const USER_INFO_KEY = "manus-runtime-user-info";
 export const getRedirectUri = () => {
   if (ReactNative.Platform.OS === "web")
     return `${getApiBaseUrl()}/api/oauth/callback`;
-  return Linking.createURL("/oauth/callback", { scheme: env.deepLinkScheme });
+  return getNativeRedirectUri();
 };
 
 function apiEndpoint(path: string): string {
@@ -124,7 +135,8 @@ export async function startOAuthLogin(): Promise<string | null> {
     return null;
   }
 
-  if (!(await Linking.canOpenURL(loginUrl))) return null;
+  if (!(await Linking.canOpenURL(loginUrl)))
+    throw new Error("Không thể mở trang đăng nhập Manus trên thiết bị này");
   await Linking.openURL(loginUrl);
   return null;
 }

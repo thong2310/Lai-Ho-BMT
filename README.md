@@ -42,7 +42,7 @@ Maps proxy geocoding/Directions thật đã trả HTTP 200/Google OK; migration 
 
 Chưa kiểm thử vòng OAuth nhà cung cấp thật, GPS trên điện thoại vật lý, merchant VNPay checkout/IPN end-to-end hoặc tải đồng thời ngoài đời thực. Chưa có background tracking, SMS/OTP, thông báo đẩy, upload/eKYC đối soát GPLX, bảo hiểm dịch vụ, hoàn tiền hay chi trả tự động. Cần hoàn tất điều khoản/quy trình vận hành trước phục vụ khách thật.
 
-Dashboard **Connect Expo** chuẩn bị Expo Go; đăng nhập cùng tài khoản Expo và dùng QR Dashboard. Build APK/AAB/iOS/TestFlight từ checkpoint bằng Dashboard. Chưa có release artifact/App Store/Google Play chỉ từ việc source build qua.
+Dashboard **Connect Expo** chuẩn bị Expo Go; đăng nhập cùng tài khoản Expo và dùng QR Dashboard. Khi chạy trong Expo Go, OAuth dùng callback `exp/exps://.../--/oauth/callback`; khi chạy bản native standalone, OAuth dùng scheme riêng của app. Nếu đang mở bundle cũ, reload Expo Go sau khi cập nhật. Build APK/AAB/iOS/TestFlight từ checkpoint bằng Dashboard. Chưa có release artifact/App Store/Google Play chỉ từ việc source build qua.
 
 ## Cấu trúc
 
