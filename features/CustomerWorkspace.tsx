@@ -1,111 +1,931 @@
-import React, { useEffect, useState } from 'react';
-import { Image, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
-import { Button, Card, COLORS, Empty, Field, Icon, Notice, Pill, RouteLine, SectionTitle, StatusPill } from '@/components/laiho/ui';
-import { trpc } from '@/lib/trpc';
-import { LOCATIONS, VEHICLES, formatDate, formatMoney, type Quote, type Ride, type VehicleType, type Workspace } from '@/shared/domain';
+import { useEffect, useState } from "react";
+import {
+  Image,
+  Modal,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+  useWindowDimensions,
+} from "react-native";
+import {
+  Button,
+  Card,
+  COLORS,
+  Empty,
+  Field,
+  Icon,
+  Notice,
+  Pill,
+  RouteLine,
+  SectionTitle,
+  StatusPill,
+} from "@/components/laiho/ui";
+import { LocationSearch } from "@/components/laiho/LocationSearch";
+import { RideMap } from "@/components/laiho/RideMap";
+import { RideTracking } from "@/components/laiho/RideTracking";
+import { RidePayment } from "@/components/laiho/RidePayment";
+import { getCurrentCoordinate } from "@/hooks/use-current-location";
+import { trpc } from "@/lib/trpc";
+import {
+  LOCATIONS,
+  VEHICLES,
+  formatDate,
+  formatMoney,
+  type Quote,
+  type VehicleType,
+  type Workspace,
+} from "@/shared/domain";
+import type { GeoPlace } from "@/shared/mobility";
 
-const HERO = '/manus-storage/async-images/NfkU7yC8QrqFl9NESXoht3/image-2.webp';
+const HERO = "/manus-storage/async-images/NfkU7yC8QrqFl9NESXoht3/image-2.webp";
 const localSchedule = () => {
   const d = new Date(Date.now() + 20 * 60000);
-  const p = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  const part = (key: string) =>
+    new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Ho_Chi_Minh",
+      [key]: "2-digit",
+      hourCycle: "h23",
+    })
+      .formatToParts(d)
+      .find((p) => p.type === key)?.value ?? "";
+  return `${part("year")}-${part("month")}-${part("day")} ${part("hour")}:${part("minute")}`;
 };
-function parseSchedule(text: string) { return new Date(text.replace(' ', 'T') + ':00+07:00'); }
-function LocationInput({ label, value, onChange, onSelect, marker }: { label: string; value: string; onChange: (v: string) => void; onSelect: (i: number) => void; marker: string }) {
-  const [open, setOpen] = useState(false);
-  return <View style={{ gap: 6 }}><Text style={s.label}>{label}</Text><View style={s.location}><Icon name="location-outline" color={marker} size={20} /><FieldBare value={value} onChange={(v) => { onChange(v); setOpen(true); }} onFocus={() => setOpen(true)} /><Pressable onPress={() => setOpen(!open)} accessibilityLabel="Chọn địa điểm gợi ý"><Icon name="chevron-down" size={16} color={COLORS.muted} /></Pressable></View>{open && <View style={s.suggestions}>{LOCATIONS.map((location, index) => <Pressable key={location.label} onPress={() => { onSelect(index); setOpen(false); }} style={({ pressed }) => [s.suggestion, pressed && { backgroundColor: '#E8F5EE' }]}><Icon name="navigate-outline" size={15} color={COLORS.primary} /><Text style={s.small}>{location.label}</Text></Pressable>)}</View>}</View>;
+function parseSchedule(text: string) {
+  return new Date(text.replace(" ", "T") + ":00+07:00");
 }
-function FieldBare({ value, onChange, onFocus }: { value: string; onChange: (v: string) => void; onFocus: () => void }) { return <TextInput accessibilityLabel="Địa điểm" value={value} onChangeText={onChange} onFocus={onFocus} style={{ flex: 1, fontSize: 13, color: COLORS.ink, paddingVertical: 12 }} placeholder="Nhập địa chỉ hoặc chọn gợi ý" placeholderTextColor={COLORS.muted} />; }
-function estimateDistance(a: number, b: number) {
-  const from = LOCATIONS[a], to = LOCATIONS[b], rad = Math.PI / 180;
-  const dlat = (to.lat - from.lat) * rad, dlng = (to.lng - from.lng) * rad;
-  const h = Math.sin(dlat / 2) ** 2 + Math.cos(from.lat * rad) * Math.cos(to.lat * rad) * Math.sin(dlng / 2) ** 2;
-  return Math.max(0.5, Math.round(6371 * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h)) * 1.35 * 10) / 10);
+function QuoteBreakdown({ quote }: { quote: Quote }) {
+  const rows: [string, number][] = [
+    ["Phí mở cuốc", quote.baseFare],
+    [`Quãng đường · ${quote.distanceKm} km`, quote.distanceFare],
+  ];
+  if (quote.nightFee) rows.push(["Phụ phí đêm (22:00–06:00)", quote.nightFee]);
+  if (quote.peakFee) rows.push(["Phụ phí giờ cao điểm", quote.peakFee]);
+  if (quote.vehicleFee) rows.push(["Phụ phí loại xe", quote.vehicleFee]);
+  if (quote.minAdjustment)
+    rows.push(["Điều chỉnh mức tối thiểu", quote.minAdjustment]);
+  return (
+    <>
+      {rows.map(([label, amount]) => (
+        <View key={label} style={s.priceRow}>
+          <Text style={s.small}>{label}</Text>
+          <Text style={s.small}>{formatMoney(amount)}</Text>
+        </View>
+      ))}
+      <View
+        style={[
+          s.between,
+          { borderTopWidth: 1, borderColor: COLORS.border, paddingTop: 12 },
+        ]}
+      >
+        <Text style={s.body}>Tổng dự kiến</Text>
+        <Text style={s.total}>{formatMoney(quote.total)}</Text>
+      </View>
+    </>
+  );
 }
 
-export function CustomerWorkspace({ data, demo, onLogin, tab, authenticated, onNavigate }: { data: Workspace | null; demo: boolean; onLogin: () => void; tab: string; authenticated: boolean; onNavigate: (tab: string) => void }) {
+type Props = {
+  data: Workspace | null;
+  demo: boolean;
+  onLogin: () => void;
+  tab: string;
+  authenticated: boolean;
+  onNavigate: (tab: string) => void;
+};
+export function CustomerWorkspace({
+  data,
+  demo,
+  onLogin,
+  tab,
+  authenticated,
+  onNavigate,
+}: Props) {
   const { width } = useWindowDimensions();
   const wide = width >= 1100;
   const utils = trpc.useUtils();
   const pricing = trpc.booking.pricing.useQuery();
   const [pickup, setPickup] = useState(LOCATIONS[0].label);
   const [dropoff, setDropoff] = useState(LOCATIONS[1].label);
-  const [fromIndex, setFromIndex] = useState(0);
-  const [toIndex, setToIndex] = useState(1);
+  const [from, setFrom] = useState<GeoPlace | null>(LOCATIONS[0]);
+  const [to, setTo] = useState<GeoPlace | null>(LOCATIONS[1]);
   const [zone, setZone] = useState(LOCATIONS[0].zone);
-  const [km, setKm] = useState(String(estimateDistance(0, 1)));
-  const [vehicle, setVehicle] = useState<VehicleType>('automatic');
+  const [distanceMode, setDistanceMode] = useState<"maps" | "manual">("maps");
+  const [km, setKm] = useState("5");
+  const [vehicle, setVehicle] = useState<VehicleType>("automatic");
   const [schedule, setSchedule] = useState(localSchedule);
-  const [timing, setTiming] = useState<'now' | 'later'>('now');
-  const [phone, setPhone] = useState('');
-  const [note, setNote] = useState('');
-  const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
+  const [timing, setTiming] = useState<"now" | "later">("now");
+  const [phone, setPhone] = useState("");
+  const [note, setNote] = useState("");
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
   const [confirm, setConfirm] = useState(false);
-  const [selected, setSelected] = useState<Ride | null>(null);
+  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const selected = data?.rides.find((ride) => ride.id === selectedId) ?? null;
   const [cancelId, setCancelId] = useState<number | null>(null);
-  const [clock, setClock] = useState(() => new Date(Date.now() + 5 * 60000).toISOString());
-  useEffect(() => { const timer = setInterval(() => setClock(new Date(Date.now() + 5 * 60000).toISOString()), 30000); return () => clearInterval(timer); }, []);
-  const scheduledDate = parseSchedule(schedule);
-  const when = timing === 'later' && !Number.isNaN(scheduledDate.getTime()) ? scheduledDate.toISOString() : clock;
-  const distance = Number(km.replace(',', '.'));
-  const validDistance = Number.isFinite(distance) && distance >= 0.5 && distance <= 300;
-  const quote = trpc.booking.quote.useQuery({ distanceKm: validDistance ? distance : 1, scheduledAt: when, vehicleType: vehicle }, { enabled: validDistance, staleTime: 10000 });
-  const create = trpc.booking.create.useMutation({ onSuccess: (ride) => { setConfirm(false); setSuccess(`Đã tạo cuốc ${ride.code}. Yêu cầu đang chờ admin điều phối.`); utils.workspace.snapshot.invalidate(); onNavigate('trips'); }, onError: (e) => { setError(e.message); setConfirm(false); } });
-  const cancel = trpc.booking.cancel.useMutation({ onSuccess: () => { setCancelId(null); setSelected(null); utils.workspace.snapshot.invalidate(); setSuccess('Đã hủy yêu cầu đặt tài xế.'); }, onError: (e) => setError(e.message) });
+  const [findingGps, setFindingGps] = useState(false);
+  const [findingAddress, setFindingAddress] = useState(false);
+  const [clock, setClock] = useState(() =>
+    new Date(Date.now() + 5 * 60000).toISOString(),
+  );
+  useEffect(() => {
+    const timer = setInterval(
+      () => setClock(new Date(Date.now() + 5 * 60000).toISOString()),
+      30000,
+    );
+    return () => clearInterval(timer);
+  }, []);
+  const date = parseSchedule(schedule);
+  const when =
+    timing === "later" && !Number.isNaN(date.getTime())
+      ? date.toISOString()
+      : clock;
+  const route = trpc.maps.route.useQuery(
+    { pickup: from ?? LOCATIONS[0], dropoff: to ?? LOCATIONS[1] },
+    {
+      enabled: tab === "book" && distanceMode === "maps" && !!from && !!to,
+      staleTime: 120000,
+      refetchInterval: 600000,
+      retry: false,
+    },
+  );
+  const routeData =
+    distanceMode === "maps" && from && to ? route.data : undefined;
+  const distance =
+    distanceMode === "maps"
+      ? (routeData?.distanceKm ?? 0)
+      : Number(km.replace(",", "."));
+  const validDistance =
+    Number.isFinite(distance) && distance >= 0.5 && distance <= 300;
+  const ready =
+    validDistance &&
+    (distanceMode === "manual" ||
+      (!!routeData && !route.isFetching && !route.error));
+  const quote = trpc.booking.quote.useQuery(
+    {
+      distanceKm: validDistance ? distance : 1,
+      scheduledAt: when,
+      vehicleType: vehicle,
+      ...(routeData ? { routeToken: routeData.routeToken } : {}),
+    },
+    { enabled: ready && tab === "book", staleTime: 10000, retry: false },
+  );
+  const create = trpc.booking.create.useMutation({
+    onSuccess: (ride) => {
+      setConfirm(false);
+      setSuccess(`Đã tạo cuốc ${ride.code}. Yêu cầu đang chờ admin điều phối.`);
+      utils.workspace.snapshot.invalidate();
+      onNavigate("trips");
+    },
+    onError: (caught) => {
+      setError(caught.message);
+      setConfirm(false);
+    },
+  });
+  const cancel = trpc.booking.cancel.useMutation({
+    onSuccess: () => {
+      setCancelId(null);
+      setSelectedId(null);
+      utils.workspace.snapshot.invalidate();
+      setSuccess("Đã hủy yêu cầu đặt tài xế.");
+    },
+    onError: (caught) => setError(caught.message),
+  });
+  const chooseFrom = (place: GeoPlace) => {
+    setFrom(place);
+    setPickup(place.label);
+    setZone(place.zone ?? "TP.HCM");
+  };
+  const chooseTo = (place: GeoPlace) => {
+    setTo(place);
+    setDropoff(place.label);
+  };
+  async function resolveAddresses() {
+    if (findingAddress) return;
+    setFindingAddress(true);
+    setError("");
+    try {
+      const [a, b] = await Promise.all([
+        utils.maps.geocode.fetch({ address: pickup }),
+        utils.maps.geocode.fetch({ address: dropoff }),
+      ]);
+      chooseFrom(a);
+      chooseTo(b);
+      setDistanceMode("maps");
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "Chưa xác định được tọa độ của địa chỉ.",
+      );
+    } finally {
+      setFindingAddress(false);
+    }
+  }
+  async function useCurrentLocation() {
+    if (findingGps) return;
+    setFindingGps(true);
+    setError("");
+    try {
+      const coordinate = await getCurrentCoordinate();
+      const place = await utils.maps.reverse.fetch(coordinate);
+      chooseFrom(place);
+      setDistanceMode("maps");
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "Chưa lấy được vị trí. Hãy cho phép GPS hoặc nhập địa chỉ.",
+      );
+    } finally {
+      setFindingGps(false);
+    }
+  }
   function requestBooking() {
-    setError('');
-    if (!pickup.trim() || !dropoff.trim()) return setError('Vui lòng điền điểm đón và điểm đến.');
-    if (pickup.trim() === dropoff.trim()) return setError('Điểm đón và điểm đến cần khác nhau.');
-    if (!validDistance) return setError('Quãng đường phải từ 0,5 đến 300 km.');
-    if (!/^(0|\+84)[0-9\s.-]{8,13}$/.test(phone)) return setError('Vui lòng nhập số điện thoại Việt Nam hợp lệ.');
-    if (timing === 'later' && (Number.isNaN(parseSchedule(schedule).getTime()) || parseSchedule(schedule).getTime() < Date.now())) return setError('Thời gian đặt trước cần là thời điểm trong tương lai (giờ Việt Nam).');
+    setError("");
+    if (!pickup.trim() || !dropoff.trim())
+      return setError("Vui lòng điền điểm đón và điểm đến.");
+    if (pickup.trim() === dropoff.trim())
+      return setError("Điểm đón và điểm đến cần khác nhau.");
+    if (!ready)
+      return setError(
+        distanceMode === "maps"
+          ? "Chọn địa chỉ có tọa độ và chờ tuyến đường cập nhật, hoặc chuyển sang km thủ công."
+          : "Quãng đường phải từ 0,5 đến 300 km.",
+      );
+    if (!/^(0|\+84)[0-9\s.-]{8,13}$/.test(phone))
+      return setError("Vui lòng nhập số điện thoại Việt Nam hợp lệ.");
+    if (
+      timing === "later" &&
+      (Number.isNaN(date.getTime()) || date.getTime() < Date.now())
+    )
+      return setError("Thời gian đặt trước cần ở tương lai (giờ Việt Nam).");
     if (!authenticated || demo) return onLogin();
-    if (!quote.data || quote.isFetching) return setError('Vui lòng chờ báo giá cập nhật.');
+    if (!quote.data || quote.isFetching || quote.error)
+      return setError("Vui lòng chờ báo giá cập nhật.");
     setConfirm(true);
   }
-  const quoteRows = (q: Quote) => [['Phí mở cuốc', q.baseFare], [`Quãng đường · ${q.distanceKm} km`, q.distanceFare], ...(q.nightFee ? [['Phụ phí đêm (22:00–06:00)', q.nightFee]] : []), ...(q.peakFee ? [['Phụ phí giờ cao điểm', q.peakFee]] : []), ...(q.vehicleFee ? [['Phụ phí loại xe', q.vehicleFee]] : []), ...(q.minAdjustment ? [['Điều chỉnh mức tối thiểu', q.minAdjustment]] : [])] as [string, number][];
 
-  if (tab === 'pricing') return <View style={{ gap: 22 }}><SectionTitle title="Giá rõ ràng, trước khi đi" subtitle="Bảng giá hiện hành từ hệ thống. Báo giá được lưu theo từng cuốc." /><Card>{pricing.data ? <>{[['Phí mở cuốc', pricing.data.baseFare], ['Đơn giá mỗi km', pricing.data.perKm], ['Giá tối thiểu', pricing.data.minFare], ['Phụ phí đêm', pricing.data.nightFee], ['Phụ phí cao điểm', pricing.data.peakFee]].map(([label, amount]) => <View key={String(label)} style={s.priceRow}><Text style={s.body}>{label}</Text><Text style={s.priceValue}>{formatMoney(Number(amount))}</Text></View>)}<Notice text="Giờ đêm: 22:00–06:00. Giờ cao điểm: 07:00–09:00 và 17:00–19:00 (giờ Việt Nam). Phí loại xe được thể hiện trong báo giá trước khi xác nhận." /><Button title="Đặt tài xế ngay" onPress={() => onNavigate('book')} /></> : <Notice tone="amber" text={pricing.error ? 'Chưa tải được bảng giá. Vui lòng thử lại.' : 'Đang tải bảng giá…'} />}</Card><Notice tone="amber" text="Khoảng cách đang là ước tính từ địa điểm gợi ý hoặc số km bạn nhập. Chưa tích hợp Google Maps; giá chưa gồm phí cầu đường/đỗ xe phát sinh thực tế." /></View>;
-  if (tab === 'help') return <View style={{ gap: 22 }}><SectionTitle title="An tâm trên mọi hành trình" subtitle="Thông tin sử dụng Lái Xe Hộ" />{[{ title: 'Lái hộ, không phải thuê xe', text: 'Tài xế đến và lái chính chiếc xe của bạn. Hãy chọn đúng loại hộp số và ghi chú đặc điểm xe để tài xế chuẩn bị.' }, { title: 'Hành trình được theo dõi thế nào?', text: 'Ứng dụng cập nhật trạng thái chuyến từ cùng cơ sở dữ liệu. Vị trí GPS trực tiếp và thông báo đẩy chưa được tích hợp trong bản đầu tiên.' }, { title: 'Hồ sơ tài xế được xét duyệt', text: 'Admin xét duyệt thông tin hồ sơ do tài xế khai báo trước khi cho phép nhận cuốc. Xác minh giấy tờ điện tử eKYC chưa kết nối nhà cung cấp.' }, { title: 'Bản dựng thử, chưa vận hành ngoài đời thực', text: 'Bản MVP hỗ trợ kiểm tra các luồng đặt–điều phối–nhận cuốc. Thanh toán hiện chưa thu tiền; cần cấu hình vận hành và nhà cung cấp trước khi phục vụ khách thật.' }].map(item => <Card key={item.title}><Text style={s.cardTitle}>{item.title}</Text><Text style={s.body}>{item.text}</Text></Card>)}</View>;
-  if (tab === 'trips') return <View style={{ gap: 22 }}><SectionTitle title="Chuyến của tôi" subtitle="Cùng một lịch sử, trên website và điện thoại." right={<Button title="Đặt chuyến mới" icon="add" variant="secondary" onPress={() => onNavigate('book')} />} />{success ? <Notice text={success} /> : null}{error ? <Notice tone="red" text={error} /> : null}{!authenticated && !demo ? <Card><Empty title="Đăng nhập để xem hành trình" subtitle="Các cuốc của bạn được lưu trong hệ thống dùng chung." /><Button title="Đăng nhập bằng Manus" onPress={onLogin} /></Card> : data?.rides.length ? data.rides.map(ride => <Card key={ride.id}><View style={s.between}><Text style={s.cardTitle}>{ride.code}</Text><StatusPill status={ride.status} /></View><RouteLine pickup={ride.pickup} dropoff={ride.dropoff} /><View style={s.between}><Text style={s.small}>{formatDate(ride.scheduledAt)} · {ride.distanceKm} km</Text><Text style={s.priceValue}>{formatMoney(ride.price)}</Text></View>{ride.driverName && <Text style={s.body}>Tài xế: {ride.driverName}</Text>}<Button title="Xem hành trình" variant="secondary" onPress={() => setSelected(ride)} /></Card>) : <Card><Empty title="Chưa có chuyến đi nào" subtitle="Đặt tài xế đầu tiên để bắt đầu hành trình của bạn." /></Card>}
-    <Modal visible={!!selected} transparent animationType="fade" onRequestClose={() => setSelected(null)}><View style={s.overlay}><ScrollView style={s.modal} contentContainerStyle={{ gap: 20, padding: 24 }}><View style={s.between}><Text style={s.cardTitle}>Hành trình {selected?.code}</Text><Pressable onPress={() => setSelected(null)}><Icon name="close" /></Pressable></View>{selected && <><StatusPill status={selected.status} /><RouteLine pickup={selected.pickup} dropoff={selected.dropoff} /><Text style={s.body}>{VEHICLES[selected.vehicleType]} · {formatDate(selected.scheduledAt)}</Text><Text style={s.priceValue}>{formatMoney(selected.price)}</Text><Text style={s.body}>{selected.driverName ? `Tài xế: ${selected.driverName}` : 'Đang tìm tài xế phù hợp'}</Text>{selected.note ? <Text style={s.body}>{selected.note}</Text> : null}{data?.events.filter(event => event.rideId === selected.id).map(event => <View key={event.id} style={{ gap: 5, borderLeftWidth: 2, borderColor: COLORS.primary, paddingLeft: 14 }}><Text style={s.body}>{event.message}</Text><Text style={s.small}>{formatDate(event.createdAt)}</Text></View>)}{!['completed', 'cancelled', 'in_progress'].includes(selected.status) && <Button title="Hủy yêu cầu" variant="danger" onPress={() => demo ? onLogin() : setCancelId(selected.id)} />}{cancelId !== null && <View style={{ gap: 12 }}><Notice tone="amber" text="Bạn chắc chắn muốn hủy cuốc này?" /><Button title="Xác nhận hủy" loading={cancel.isPending} variant="danger" onPress={() => cancel.mutate({ rideId: cancelId })} /></View>}</>}</ScrollView></View></Modal>
-  </View>;
-
-  return <View style={{ gap: 25 }}>
-    <View style={{ gap: 8 }}><View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}><View style={{ width: 7, height: 7, backgroundColor: COLORS.primary, borderRadius: 5 }} /><Text style={s.eyebrow}>DỊCH VỤ TÀI XẾ LÁI HỘ</Text></View><Text style={[s.headline, { fontSize: wide ? 38 : 29 }]}>Bạn tận hưởng.{wide ? ' ' : '\n'}Chúng tôi cầm lái.</Text><Text style={s.subtitle}>Về nhà an tâm, trên chính chiếc xe của bạn.</Text></View>
-    {error ? <Notice text={error} tone="red" /> : null}
-    <View style={{ flexDirection: wide ? 'row' : 'column', gap: 24, alignItems: 'stretch' }}>
-      <Card style={{ flex: wide ? 0.92 : undefined, padding: wide ? 26 : 20, gap: 20 }}>
-        <View style={s.between}><Text style={s.cardTitle}>Đặt tài xế lái hộ</Text><View style={{ flexDirection: 'row', gap: 4 }}><Icon name="shield-checkmark-outline" size={15} color={COLORS.primary} /><Text style={[s.small, { color: COLORS.primary }]}>An tâm & minh bạch</Text></View></View>
-        <View style={s.segment}>{(['now', 'later'] as const).map(t => <Pressable key={t} onPress={() => setTiming(t)} style={[s.segmentButton, timing === t && s.segmentActive]}><Icon name={t === 'now' ? 'flash-outline' : 'calendar-outline'} size={16} color={timing === t ? COLORS.primary : COLORS.muted} /><Text style={{ fontSize: 12, fontWeight: '600', color: timing === t ? COLORS.primary : COLORS.muted }}>{t === 'now' ? 'Đi ngay' : 'Đặt trước'}</Text></Pressable>)}</View>
-        <LocationInput label="ĐIỂM ĐÓN" value={pickup} marker={COLORS.primary} onChange={setPickup} onSelect={i => { setFromIndex(i); setPickup(LOCATIONS[i].label); setZone(LOCATIONS[i].zone); setKm(String(estimateDistance(i, toIndex))); }} />
-        <LocationInput label="ĐIỂM ĐẾN" value={dropoff} marker="#DDA03F" onChange={setDropoff} onSelect={i => { setToIndex(i); setDropoff(LOCATIONS[i].label); setKm(String(estimateDistance(fromIndex, i))); }} />
-        <View style={{ gap: 8 }}><Text style={s.label}>XE CỦA BẠN</Text><View style={{ flexDirection: 'row', gap: 8 }}>{(Object.keys(VEHICLES) as VehicleType[]).map(v => <Pressable key={v} onPress={() => setVehicle(v)} style={[s.vehicle, vehicle === v && { borderColor: COLORS.primary, backgroundColor: '#F0F9F3' }]}><Icon name={v === 'luxury' ? 'car-sport-outline' : 'car-outline'} size={23} color={vehicle === v ? COLORS.primary : '#8A9D95'} /><Text style={{ fontSize: 10, color: vehicle === v ? COLORS.primary : '#7A8D85', fontWeight: vehicle === v ? '700' : '500' }}>{VEHICLES[v]}</Text></Pressable>)}</View></View>
-        <View style={{ flexDirection: 'row', gap: 12 }}><View style={{ flex: 0.7 }}><Field label="Quãng đường ước tính (km)" value={km} onChangeText={setKm} keyboardType="decimal-pad" /></View><View style={{ flex: 1 }}><Field label="Số điện thoại liên hệ" value={phone} onChangeText={setPhone} keyboardType="phone-pad" placeholder="09xx xxx xxx" /></View></View>
-        {timing === 'later' && <Field label="Giờ Việt Nam (YYYY-MM-DD HH:mm)" value={schedule} onChangeText={setSchedule} placeholder="2026-10-25 20:30" />}
-        <Field label="Ghi chú cho tài xế (không bắt buộc)" value={note} onChangeText={setNote} placeholder="Số tầng, đặc điểm xe, điểm hẹn…" />
-        <View style={{ backgroundColor: '#F5F9F5', borderRadius: 12, padding: 16, gap: 10 }}><View style={s.between}><Text style={[s.label, { color: COLORS.ink }]}>BÁO GIÁ TỰ ĐỘNG</Text><Pill label={quote.isFetching ? 'Đang tính' : 'Đã gồm phụ phí'} /></View>{validDistance && quote.data ? <>{quoteRows(quote.data).map(([label, amount]) => <View style={s.priceRow} key={label}><Text style={s.small}>{label}</Text><Text style={s.small}>{formatMoney(amount)}</Text></View>)}<View style={[s.between, { borderTopWidth: 1, borderColor: '#DCE8DD', paddingTop: 12 }]}><Text style={s.body}>Tổng dự kiến</Text><Text style={{ fontSize: 25, color: COLORS.primary, fontWeight: '800' }}>{formatMoney(quote.data.total)}</Text></View></> : <Text style={s.small}>{!validDistance ? 'Nhập quãng đường từ 0,5–300 km.' : quote.error ? 'Chưa tải được báo giá. Vui lòng thử lại.' : 'Đang tải bảng giá từ hệ thống…'}</Text>}</View>
-        <Button title={authenticated ? 'Xác nhận đặt tài xế' : 'Đăng nhập & đặt tài xế'} icon="arrow-forward" loading={create.isPending} onPress={requestBooking} />
-        <Text style={[s.small, { textAlign: 'center', fontSize: 10, lineHeight: 17 }]}>Khoảng cách ước tính, chưa tích hợp bản đồ. Chưa thu tiền trong bản thử nghiệm.</Text>
-      </Card>
-      <View style={{ flex: wide ? 1.15 : undefined, gap: 20 }}>
-        <View style={[s.hero, { height: wide ? 310 : 210 }]}><Image source={Platform.OS === "web" ? { uri: HERO } : require("../assets/images/hero-native.jpg")} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }} resizeMode="cover" /><View style={s.heroOverlay}><Pill label="Lái xe của bạn · Chăm sóc hành trình" /><Text style={s.heroTitle}>Đi vui. Về an tâm.</Text><Text style={s.heroText}>Một người lái đáng tin cho những lúc bạn cần nghỉ ngơi.</Text></View></View>
-        <View style={{ flexDirection: 'row', gap: 12 }}>{[{ icon: 'shield-checkmark-outline' as const, title: 'Tài xế xét duyệt', text: 'Hồ sơ được admin kiểm tra' }, { icon: 'wallet-outline' as const, title: 'Biết giá trước', text: 'Chi phí hiển thị minh bạch' }].map(item => <Card key={item.title} style={{ flex: 1, padding: 17, gap: 9 }}><View style={s.featureIcon}><Icon name={item.icon} color={COLORS.primary} size={23} /></View><Text style={{ fontSize: 13, fontWeight: '700', color: COLORS.ink }}>{item.title}</Text><Text style={[s.small, { fontSize: 11, lineHeight: 18 }]}>{item.text}</Text></Card>)}</View>
-        <Card style={{ gap: 18 }}><View style={s.between}><Text style={s.cardTitle}>Về nhà trong 3 bước</Text><Icon name="navigate-outline" size={18} color={COLORS.primary} /></View>{[{ n: '01', title: 'Cho chúng tôi biết hành trình', desc: 'Chọn điểm đón, điểm đến và xem báo giá.' }, { n: '02', title: 'Tài xế phù hợp nhận cuốc', desc: 'Admin điều phối đến tài xế đã xét duyệt.' }, { n: '03', title: 'Bạn nghỉ ngơi, chúng tôi lái', desc: 'Theo dõi hành trình ngay trong ứng dụng.' }].map(step => <View key={step.n} style={{ flexDirection: 'row', gap: 14 }}><View style={s.step}><Text style={{ color: COLORS.primary, fontWeight: '700', fontSize: 12 }}>{step.n}</Text></View><View style={{ gap: 5, flex: 1 }}><Text style={{ color: COLORS.ink, fontSize: 13, fontWeight: '600' }}>{step.title}</Text><Text style={s.small}>{step.desc}</Text></View></View>)}</Card>
-        <View style={{ flexDirection: 'row', gap: 10, alignItems: 'flex-start', paddingHorizontal: 6 }}><Icon name="information-circle-outline" size={17} color={COLORS.muted} /><Text style={[s.small, { flex: 1, lineHeight: 19 }]}>MVP dành cho kiểm tra vận hành. Thanh toán, eKYC, định tuyến và GPS trực tiếp chưa kết nối.</Text></View>
+  if (tab === "pricing")
+    return (
+      <View style={s.stack}>
+        <SectionTitle
+          title="Giá rõ ràng, trước khi đi"
+          subtitle="Bảng giá hiệu lực từ hệ thống; giá snapshot được lưu cho từng cuốc."
+        />
+        <Card>
+          {pricing.data ? (
+            <>
+              {[
+                ["Phí mở cuốc", pricing.data.baseFare],
+                ["Đơn giá mỗi km", pricing.data.perKm],
+                ["Giá tối thiểu", pricing.data.minFare],
+                ["Phụ phí đêm", pricing.data.nightFee],
+                ["Phụ phí cao điểm", pricing.data.peakFee],
+              ].map(([label, amount]) => (
+                <View key={String(label)} style={s.priceRow}>
+                  <Text style={s.body}>{label}</Text>
+                  <Text style={s.priceValue}>
+                    {formatMoney(Number(amount))}
+                  </Text>
+                </View>
+              ))}
+              <Notice text="Giờ đêm 22:00–06:00; cao điểm 07:00–09:00 và 17:00–19:00 (giờ Việt Nam)." />
+              <Button
+                title="Đặt tài xế ngay"
+                onPress={() => onNavigate("book")}
+              />
+            </>
+          ) : (
+            <Notice
+              tone="amber"
+              text="Đang tải bảng giá hoặc dịch vụ hiện không khả dụng."
+            />
+          )}
+        </Card>
+        <Notice
+          tone="blue"
+          text="Google Maps tính quãng đường đường bộ. ETA là ước tính, không cam kết giao thông; giá chưa gồm phí cầu đường/đỗ xe phát sinh. Chế độ km thủ công được đánh dấu riêng."
+        />
       </View>
+    );
+  if (tab === "help")
+    return (
+      <View style={s.stack}>
+        <SectionTitle
+          title="An tâm trên mọi hành trình"
+          subtitle="GPS có quyền riêng tư và giá minh bạch."
+        />
+        {[
+          {
+            title: "Lái hộ trên xe của bạn",
+            text: "Tài xế đến và lái chính chiếc xe của bạn. Chọn đúng loại hộp số và ghi chú đặc điểm xe.",
+          },
+          {
+            title: "Theo dõi tài xế",
+            text: "Khi tài xế bật chia sẻ GPS cho cuốc đã nhận, bạn xem vị trí mới nhất trên bản đồ. Ứng dụng làm mới khoảng 5 giây; vị trí cũ được đánh dấu. GPS chỉ chia sẻ khi app tài xế đang mở.",
+          },
+          {
+            title: "Vị trí hiện tại của khách",
+            text: "Nút Dùng vị trí của tôi xin quyền GPS để điền điểm đón. Khách không tự động phát vị trí liên tục. Nếu từ chối quyền, vẫn có thể tìm/nhập địa chỉ.",
+          },
+          {
+            title: "Thanh toán an toàn",
+            text: "Thanh toán trực tuyến chỉ mở cổng đã được merchant cấu hình; trạng thái xác minh tại server. Chưa kết nối merchant thì không tạo giao dịch hay hiển thị giả đã trả tiền.",
+          },
+          {
+            title: "Xác minh tài xế",
+            text: "Admin xét duyệt hồ sơ tự khai. eKYC và đối soát GPLX điện tử chưa kết nối.",
+          },
+        ].map((item) => (
+          <Card key={item.title}>
+            <Text style={s.cardTitle}>{item.title}</Text>
+            <Text style={s.body}>{item.text}</Text>
+          </Card>
+        ))}
+      </View>
+    );
+  if (tab === "trips")
+    return (
+      <View style={s.stack}>
+        <SectionTitle
+          title="Chuyến của tôi"
+          subtitle="Một lịch sử dùng chung trên web và điện thoại."
+          right={
+            <Button
+              title="Đặt chuyến mới"
+              icon="add"
+              variant="secondary"
+              onPress={() => onNavigate("book")}
+            />
+          }
+        />
+        {success ? <Notice text={success} /> : null}
+        {error ? <Notice tone="red" text={error} /> : null}
+        {!authenticated && !demo ? (
+          <Card>
+            <Empty
+              title="Đăng nhập để xem hành trình"
+              subtitle="Dữ liệu chuyến chỉ dành cho người trong cuốc."
+            />
+            <Button title="Đăng nhập bằng Manus" onPress={onLogin} />
+          </Card>
+        ) : data?.rides.length ? (
+          data.rides.map((ride) => (
+            <Card key={ride.id}>
+              <View style={s.between}>
+                <Text style={s.cardTitle}>{ride.code}</Text>
+                <StatusPill status={ride.status} />
+              </View>
+              <RouteLine pickup={ride.pickup} dropoff={ride.dropoff} />
+              <View style={s.between}>
+                <Text style={s.small}>
+                  {formatDate(ride.scheduledAt)} · {ride.distanceKm} km
+                </Text>
+                <Text style={s.priceValue}>{formatMoney(ride.price)}</Text>
+              </View>
+              {ride.driverName ? (
+                <Text style={s.body}>Tài xế: {ride.driverName}</Text>
+              ) : null}
+              <Button
+                title="Xem hành trình & GPS"
+                variant="secondary"
+                onPress={() => {
+                  setSelectedId(ride.id);
+                  setCancelId(null);
+                }}
+              />
+            </Card>
+          ))
+        ) : (
+          <Card>
+            <Empty
+              title="Chưa có chuyến đi nào"
+              subtitle="Đặt tài xế để bắt đầu hành trình."
+            />
+          </Card>
+        )}
+        <Modal
+          visible={!!selected}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setSelectedId(null)}
+        >
+          <View style={s.overlay}>
+            <ScrollView style={s.modal} contentContainerStyle={s.modalBody}>
+              <View style={s.between}>
+                <Text style={s.cardTitle}>Hành trình {selected?.code}</Text>
+                <Pressable
+                  onPress={() => setSelectedId(null)}
+                  accessibilityLabel="Đóng chi tiết chuyến"
+                >
+                  <Icon name="close" />
+                </Pressable>
+              </View>
+              {selected ? (
+                <>
+                  <StatusPill status={selected.status} />
+                  <RouteLine
+                    pickup={selected.pickup}
+                    dropoff={selected.dropoff}
+                  />
+                  <Text style={s.body}>
+                    {VEHICLES[selected.vehicleType]} ·{" "}
+                    {formatDate(selected.scheduledAt)}
+                  </Text>
+                  <Text style={s.priceValue}>
+                    {formatMoney(selected.price)}
+                  </Text>
+                  <Text style={s.body}>
+                    {selected.driverName
+                      ? `Tài xế: ${selected.driverName}`
+                      : "Đang tìm tài xế phù hợp"}
+                  </Text>
+                  <RideTracking key={selected.id} ride={selected} demo={demo} />
+                  <RidePayment ride={selected} demo={demo} />
+                  {selected.note ? (
+                    <Text style={s.body}>{selected.note}</Text>
+                  ) : null}
+                  {data?.events
+                    .filter((event) => event.rideId === selected.id)
+                    .map((event) => (
+                      <View key={event.id} style={s.timeline}>
+                        <Text style={s.body}>{event.message}</Text>
+                        <Text style={s.small}>
+                          {formatDate(event.createdAt)}
+                        </Text>
+                      </View>
+                    ))}
+                  {!["completed", "cancelled", "in_progress"].includes(
+                    selected.status,
+                  ) ? (
+                    <Button
+                      title="Hủy yêu cầu"
+                      variant="danger"
+                      onPress={() =>
+                        demo ? onLogin() : setCancelId(selected.id)
+                      }
+                    />
+                  ) : null}
+                  {cancelId !== null ? (
+                    <View style={{ gap: 12 }}>
+                      <Notice
+                        tone="amber"
+                        text="Bạn chắc chắn muốn hủy cuốc này?"
+                      />
+                      <Button
+                        title="Xác nhận hủy"
+                        loading={cancel.isPending}
+                        variant="danger"
+                        onPress={() => cancel.mutate({ rideId: cancelId })}
+                      />
+                    </View>
+                  ) : null}
+                </>
+              ) : null}
+            </ScrollView>
+          </View>
+        </Modal>
+      </View>
+    );
+
+  return (
+    <View style={s.stack}>
+      <View style={{ gap: 8 }}>
+        <Text style={s.eyebrow}>DỊCH VỤ TÀI XẾ LÁI HỘ</Text>
+        <Text style={[s.headline, { fontSize: wide ? 38 : 29 }]}>
+          Bạn tận hưởng.{wide ? " " : "\n"}Chúng tôi cầm lái.
+        </Text>
+        <Text style={s.subtitle}>
+          Biết giá trước. Xem tuyến đường. Về nhà an tâm.
+        </Text>
+      </View>
+      {error ? <Notice text={error} tone="red" /> : null}
+      <View
+        style={{
+          flexDirection: wide ? "row" : "column",
+          gap: 24,
+          alignItems: "stretch",
+        }}
+      >
+        <Card
+          style={{
+            flex: wide ? 0.92 : undefined,
+            padding: wide ? 26 : 20,
+            gap: 18,
+          }}
+        >
+          <View style={s.between}>
+            <Text style={s.cardTitle}>Đặt tài xế lái hộ</Text>
+            <Pill label="Giá minh bạch" />
+          </View>
+          <View style={s.segment}>
+            {(["now", "later"] as const).map((option) => (
+              <Pressable
+                key={option}
+                onPress={() => setTiming(option)}
+                style={[s.segmentButton, timing === option && s.segmentActive]}
+              >
+                <Icon
+                  name={option === "now" ? "flash-outline" : "calendar-outline"}
+                  size={16}
+                  color={COLORS.primary}
+                />
+                <Text style={s.choiceLabel}>
+                  {option === "now" ? "Đi ngay" : "Đặt trước"}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+          <LocationSearch
+            label="ĐIỂM ĐÓN"
+            value={pickup}
+            marker={COLORS.primary}
+            onChange={(value) => {
+              setPickup(value);
+              setFrom(null);
+            }}
+            onSelect={chooseFrom}
+          />
+          <Button
+            title="Dùng vị trí của tôi"
+            icon="locate-outline"
+            variant="secondary"
+            loading={findingGps}
+            onPress={useCurrentLocation}
+          />
+          <LocationSearch
+            label="ĐIỂM ĐẾN"
+            value={dropoff}
+            marker="#DDA03F"
+            onChange={(value) => {
+              setDropoff(value);
+              setTo(null);
+            }}
+            onSelect={chooseTo}
+          />
+          {(!from || !to) && distanceMode === "maps" ? (
+            <Button
+              title="Xác định địa chỉ & tính tuyến"
+              variant="secondary"
+              icon="search"
+              loading={findingAddress}
+              onPress={resolveAddresses}
+            />
+          ) : null}
+          <View style={s.segment}>
+            {(["maps", "manual"] as const).map((mode) => (
+              <Pressable
+                key={mode}
+                onPress={() => setDistanceMode(mode)}
+                style={[
+                  s.segmentButton,
+                  distanceMode === mode && s.segmentActive,
+                ]}
+              >
+                <Text style={s.choiceLabel}>
+                  {mode === "maps" ? "Google Maps" : "Km thủ công"}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+          {distanceMode === "maps" ? (
+            <View style={{ gap: 8 }}>
+              {route.isFetching ? (
+                <Text style={s.small}>Đang tính tuyến đường…</Text>
+              ) : routeData && !route.error ? (
+                <Text style={[s.body, { color: COLORS.primary }]}>
+                  {routeData.distanceKm} km đường bộ · khoảng{" "}
+                  {Math.ceil(routeData.durationSeconds / 60)} phút chạy xe
+                </Text>
+              ) : (
+                <Notice
+                  tone="amber"
+                  text={
+                    route.error?.message ??
+                    "Chọn địa chỉ trong gợi ý hoặc xác định địa chỉ để xem tuyến đường."
+                  }
+                />
+              )}
+            </View>
+          ) : (
+            <>
+              <Field
+                label="Quãng đường ước tính thủ công (km)"
+                value={km}
+                onChangeText={setKm}
+                keyboardType="decimal-pad"
+              />
+              <Notice
+                tone="amber"
+                text="Bạn nhập số km thủ công. Tuyến này chưa được Maps xác minh và không lưu tọa độ cho bản đồ chuyến."
+              />
+            </>
+          )}
+          <Text style={s.label}>XE CỦA BẠN</Text>
+          <View style={{ flexDirection: "row", gap: 8 }}>
+            {(Object.keys(VEHICLES) as VehicleType[]).map((value) => (
+              <Pressable
+                key={value}
+                onPress={() => setVehicle(value)}
+                style={[
+                  s.vehicle,
+                  vehicle === value && {
+                    borderColor: COLORS.primary,
+                    backgroundColor: "#F0F9F3",
+                  },
+                ]}
+              >
+                <Icon
+                  name={
+                    value === "luxury" ? "car-sport-outline" : "car-outline"
+                  }
+                  size={23}
+                  color={vehicle === value ? COLORS.primary : COLORS.muted}
+                />
+                <Text style={s.choiceLabel}>{VEHICLES[value]}</Text>
+              </Pressable>
+            ))}
+          </View>
+          <Field
+            label="Số điện thoại liên hệ"
+            value={phone}
+            onChangeText={setPhone}
+            keyboardType="phone-pad"
+            placeholder="09xx xxx xxx"
+          />
+          {timing === "later" ? (
+            <Field
+              label="Giờ Việt Nam (YYYY-MM-DD HH:mm)"
+              value={schedule}
+              onChangeText={setSchedule}
+            />
+          ) : null}
+          <Field
+            label="Ghi chú cho tài xế (không bắt buộc)"
+            value={note}
+            onChangeText={setNote}
+            placeholder="Số tầng, đặc điểm xe, điểm hẹn…"
+          />
+          <View style={s.quote}>
+            <View style={s.between}>
+              <Text style={s.label}>BÁO GIÁ TỰ ĐỘNG</Text>
+              <Pill
+                label={
+                  quote.isFetching
+                    ? "Đang tính"
+                    : distanceMode === "maps"
+                      ? "Theo tuyến Maps"
+                      : "Km thủ công"
+                }
+              />
+            </View>
+            {ready && quote.data && !quote.error ? (
+              <QuoteBreakdown quote={quote.data} />
+            ) : (
+              <Text style={s.small}>
+                {quote.error?.message ?? "Chọn tuyến hợp lệ để xem báo giá."}
+              </Text>
+            )}
+          </View>
+          <Button
+            title={
+              authenticated ? "Xác nhận đặt tài xế" : "Đăng nhập & đặt tài xế"
+            }
+            icon="arrow-forward"
+            loading={create.isPending}
+            disabled={findingGps || findingAddress}
+            onPress={requestBooking}
+          />
+          <Text style={[s.small, { textAlign: "center" }]}>
+            Giá cuốc được server tính lại và lưu khi đặt. GPS chỉ dùng khi bạn
+            cho phép.
+          </Text>
+        </Card>
+        <View style={{ flex: wide ? 1.15 : undefined, gap: 18 }}>
+          <Card style={{ padding: 14, gap: 12 }}>
+            <View style={s.between}>
+              <Text style={s.cardTitle}>Bản đồ hành trình</Text>
+              <Icon name="map-outline" color={COLORS.primary} />
+            </View>
+            <RideMap
+              state={{
+                pickup: from,
+                dropoff: to,
+                polyline: distanceMode === "maps" ? routeData?.polyline : null,
+              }}
+              height={wide ? 350 : 280}
+            />
+            <Text style={s.small}>
+              Xanh: điểm đón · Vàng: điểm đến. Bản đồ tương tác Google Maps.
+            </Text>
+          </Card>
+          <View style={[s.hero, { height: 210 }]}>
+            <Image
+              source={
+                Platform.OS === "web"
+                  ? { uri: HERO }
+                  : require("../assets/images/hero-native.jpg")
+              }
+              style={{
+                position: "absolute",
+                inset: 0,
+                width: "100%",
+                height: "100%",
+              }}
+              resizeMode="cover"
+            />
+            <View style={s.heroOverlay}>
+              <Text style={s.heroTitle}>Đi vui. Về an tâm.</Text>
+              <Text style={s.heroText}>
+                Một người lái đáng tin cho những lúc bạn cần nghỉ ngơi.
+              </Text>
+            </View>
+          </View>
+          <Card style={{ gap: 16 }}>
+            <Text style={s.cardTitle}>Về nhà trong 3 bước</Text>
+            {[
+              {
+                n: "01",
+                title: "Chọn hành trình, biết giá trước",
+                desc: "Google Maps tính đường bộ; giá hiển thị từng thành phần.",
+              },
+              {
+                n: "02",
+                title: "Tài xế phù hợp nhận cuốc",
+                desc: "Admin điều phối tới tài xế đã xét duyệt.",
+              },
+              {
+                n: "03",
+                title: "Theo dõi hành trình của bạn",
+                desc: "GPS khi tài xế bật chia sẻ; trạng thái dùng chung website/app.",
+              },
+            ].map((step) => (
+              <View key={step.n} style={{ flexDirection: "row", gap: 14 }}>
+                <Text style={s.step}>{step.n}</Text>
+                <View style={{ gap: 5, flex: 1 }}>
+                  <Text style={s.bodyStrong}>{step.title}</Text>
+                  <Text style={s.small}>{step.desc}</Text>
+                </View>
+              </View>
+            ))}
+          </Card>
+          <Notice
+            tone="blue"
+            text="GPS chỉ hoạt động foreground khi người dùng chủ động bật. Thanh toán cần merchant hợp lệ; không thu tiền nếu chưa kết nối cổng."
+          />
+        </View>
+      </View>
+      <Modal
+        visible={confirm}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setConfirm(false)}
+      >
+        <View style={s.overlay}>
+          <View style={[s.modal, { padding: 24, gap: 18 }]}>
+            <Text style={s.cardTitle}>Xác nhận hành trình</Text>
+            <RouteLine pickup={pickup} dropoff={dropoff} />
+            <Text style={s.body}>
+              {VEHICLES[vehicle]} · {formatDate(when)} · {distance} km
+            </Text>
+            <Text style={s.total}>
+              {quote.data ? formatMoney(quote.data.total) : ""}
+            </Text>
+            <Notice text="Cuốc sẽ được lưu để Admin điều phối. Thanh toán trực tuyến thực hiện sau khi chuyến hoàn tất và cổng được cấu hình." />
+            <Button
+              title="Đặt tài xế"
+              loading={create.isPending}
+              onPress={() =>
+                create.mutate({
+                  pickup: pickup.trim(),
+                  dropoff: dropoff.trim(),
+                  zone,
+                  distanceKm: distance,
+                  scheduledAt: when,
+                  vehicleType: vehicle,
+                  phone,
+                  note,
+                  ...(routeData ? { routeToken: routeData.routeToken } : {}),
+                })
+              }
+            />
+            <Button
+              title="Quay lại"
+              variant="ghost"
+              onPress={() => setConfirm(false)}
+            />
+          </View>
+        </View>
+      </Modal>
     </View>
-    <Modal visible={confirm} transparent animationType="fade" onRequestClose={() => setConfirm(false)}><View style={s.overlay}><View style={[s.modal, { padding: 24, gap: 18 }]}><Text style={s.cardTitle}>Xác nhận hành trình</Text><RouteLine pickup={pickup} dropoff={dropoff} /><Text style={s.body}>{VEHICLES[vehicle]} · {formatDate(when)}</Text><Text style={{ fontSize: 29, color: COLORS.primary, fontWeight: '800' }}>{quote.data ? formatMoney(quote.data.total) : ''}</Text><Notice text="Yêu cầu sẽ được lưu vào hệ thống để admin điều phối. Chưa có thanh toán trực tuyến trong bản này." /><Button title="Đặt tài xế" loading={create.isPending} onPress={() => create.mutate({ pickup: pickup.trim(), dropoff: dropoff.trim(), zone, distanceKm: distance, scheduledAt: when, vehicleType: vehicle, phone, note })} /><Button title="Quay lại" variant="ghost" onPress={() => setConfirm(false)} /></View></View></Modal>
-  </View>;
+  );
 }
 const s = StyleSheet.create({
-  eyebrow: { color: COLORS.primary, fontWeight: '700', fontSize: 10, letterSpacing: 1.8 }, headline: { fontWeight: '800', letterSpacing: -1.1, color: COLORS.ink, lineHeight: 45 }, subtitle: { fontSize: 14, color: '#7C8E84', lineHeight: 22 },
-  cardTitle: { color: COLORS.ink, fontWeight: '700', fontSize: 18, letterSpacing: -0.4 }, body: { color: '#526D5F', fontSize: 13, lineHeight: 21 }, small: { color: '#809287', fontSize: 12 }, label: { color: '#7A8E82', fontSize: 10, fontWeight: '700', letterSpacing: 0.8 },
-  between: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 10 }, priceRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 10, paddingVertical: 3 }, priceValue: { color: COLORS.ink, fontSize: 17, fontWeight: '700' },
-  segment: { flexDirection: 'row', padding: 4, backgroundColor: '#F2F6F2', borderRadius: 10, gap: 4 }, segmentButton: { flex: 1, flexDirection: 'row', gap: 7, justifyContent: 'center', alignItems: 'center', padding: 11, borderRadius: 7 }, segmentActive: { backgroundColor: 'white', shadowColor: '#45644E', shadowOpacity: 0.07, shadowRadius: 5 },
-  location: { flexDirection: 'row', alignItems: 'center', gap: 9, paddingHorizontal: 12, backgroundColor: '#F8FAF8', borderWidth: 1, borderColor: '#DFE9E1', borderRadius: 10 }, suggestions: { backgroundColor: 'white', borderWidth: 1, borderColor: COLORS.border, borderRadius: 9 }, suggestion: { flexDirection: 'row', gap: 8, padding: 10 }, vehicle: { flex: 1, paddingVertical: 12, borderWidth: 1, borderColor: '#E3EBE4', borderRadius: 9, gap: 6, alignItems: 'center' },
-  hero: { borderRadius: 16, overflow: 'hidden', backgroundColor: '#193F34' }, heroOverlay: { flex: 1, padding: 25, justifyContent: 'flex-end', gap: 10, backgroundColor: 'rgba(9,37,28,0.25)' }, heroTitle: { fontSize: 30, fontWeight: '800', color: 'white', letterSpacing: -0.8 }, heroText: { color: '#E4EEE5', fontSize: 12, maxWidth: 240, lineHeight: 20 },
-  featureIcon: { width: 41, height: 41, borderRadius: 10, backgroundColor: '#EDF7EF', justifyContent: 'center', alignItems: 'center' }, step: { width: 35, height: 35, backgroundColor: '#F0F7EF', borderRadius: 10, justifyContent: 'center', alignItems: 'center' },
-  overlay: { flex: 1, backgroundColor: 'rgba(14,36,28,0.45)', alignItems: 'center', justifyContent: 'center', padding: 20 }, modal: { backgroundColor: 'white', borderRadius: 18, width: '100%', maxWidth: 480, maxHeight: '90%' },
+  stack: { gap: 23 },
+  eyebrow: {
+    color: COLORS.primary,
+    fontSize: 10,
+    fontWeight: "700",
+    letterSpacing: 1.8,
+  },
+  headline: {
+    color: COLORS.ink,
+    fontWeight: "800",
+    letterSpacing: -1,
+    lineHeight: 45,
+  },
+  subtitle: { color: COLORS.muted, fontSize: 14, lineHeight: 22 },
+  cardTitle: { color: COLORS.ink, fontWeight: "700", fontSize: 18 },
+  body: { color: "#526D5F", fontSize: 13, lineHeight: 21 },
+  bodyStrong: { color: COLORS.ink, fontSize: 13, fontWeight: "700" },
+  small: { color: COLORS.muted, fontSize: 12, lineHeight: 18 },
+  label: {
+    color: COLORS.muted,
+    fontSize: 10,
+    fontWeight: "700",
+    letterSpacing: 0.7,
+  },
+  between: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 10,
+  },
+  priceRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    gap: 10,
+    paddingVertical: 4,
+  },
+  priceValue: { color: COLORS.ink, fontSize: 17, fontWeight: "700" },
+  total: { color: COLORS.primary, fontSize: 26, fontWeight: "800" },
+  quote: { backgroundColor: "#F4F9F6", borderRadius: 12, padding: 16, gap: 10 },
+  segment: {
+    flexDirection: "row",
+    padding: 4,
+    backgroundColor: "#F2F6F2",
+    borderRadius: 10,
+    gap: 4,
+  },
+  segmentButton: {
+    flex: 1,
+    padding: 10,
+    borderRadius: 7,
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    gap: 6,
+  },
+  segmentActive: { backgroundColor: "#FFFFFF" },
+  choiceLabel: { color: COLORS.primary, fontSize: 11, fontWeight: "600" },
+  vehicle: {
+    flex: 1,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 10,
+    alignItems: "center",
+    gap: 7,
+  },
+  hero: { borderRadius: 16, overflow: "hidden", backgroundColor: "#193F34" },
+  heroOverlay: {
+    flex: 1,
+    padding: 25,
+    justifyContent: "flex-end",
+    gap: 10,
+    backgroundColor: "rgba(9,37,28,0.25)",
+  },
+  heroTitle: { color: "#FFFFFF", fontSize: 29, fontWeight: "800" },
+  heroText: { color: "#E4EEE5", fontSize: 12, lineHeight: 19 },
+  step: {
+    color: COLORS.primary,
+    fontSize: 12,
+    fontWeight: "700",
+    width: 34,
+    paddingVertical: 8,
+  },
+  overlay: {
+    flex: 1,
+    padding: 18,
+    backgroundColor: "rgba(14,36,28,0.45)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  modal: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 18,
+    width: "100%",
+    maxWidth: 640,
+    maxHeight: "92%",
+  },
+  modalBody: { gap: 18, padding: 22 },
+  timeline: {
+    borderLeftWidth: 2,
+    borderColor: COLORS.primary,
+    paddingLeft: 14,
+    gap: 5,
+  },
 });

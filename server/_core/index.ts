@@ -8,6 +8,8 @@ import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { createCorsMiddleware } from "./cors";
 import { clearLegacySessionCookie } from "./cookies";
+import { registerMapRoutes } from "../maps/view";
+import { registerPaymentRoutes } from "../payments";
 
 async function startServer() {
   const app = express();
@@ -15,12 +17,14 @@ async function startServer() {
 
   app.use(createCorsMiddleware());
   app.use(clearLegacySessionCookie());
+  registerPaymentRoutes(app);
 
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
   registerStorageProxy(app);
   registerOAuthRoutes(app);
+  registerMapRoutes(app);
 
   app.get("/api/health", (_req, res) => {
     res.json({ ok: true, timestamp: Date.now() });

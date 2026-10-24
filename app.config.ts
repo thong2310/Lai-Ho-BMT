@@ -32,7 +32,8 @@ const env = {
   appSlug: "laixeho",
   // S3 URL of the app logo - set this to the URL returned by generate_image when creating custom logo
   // Leave empty to use the default icon from assets/images/icon.png
-  logoUrl: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663856371269/jtdZdaVGFCqaRYMe.png",
+  logoUrl:
+    "https://files.manuscdn.com/user_upload_by_module/session_file/310519663856371269/jtdZdaVGFCqaRYMe.png",
   scheme: schemeFromBundleId,
   iosBundleId: bundleId,
   androidPackage: bundleId,
@@ -57,6 +58,7 @@ const publicRuntime = {
     process.env.EXPO_PUBLIC_APP_ID ??
     "",
   apiBaseUrl: process.env.EXPO_PUBLIC_API_BASE_URL ?? "",
+  webPreviewUrl: process.env.EXPO_WEB_PREVIEW_URL ?? "",
 };
 
 const config: ExpoConfig = {
@@ -71,9 +73,9 @@ const config: ExpoConfig = {
   ios: {
     supportsTablet: true,
     bundleIdentifier: env.iosBundleId,
-    "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false
-      }
+    infoPlist: {
+      ITSAppUsesNonExemptEncryption: false,
+    },
   },
   android: {
     adaptiveIcon: {
@@ -108,9 +110,20 @@ const config: ExpoConfig = {
     "expo-asset",
     "expo-router",
     [
+      "expo-location",
+      {
+        locationWhenInUsePermission:
+          "Lái Xe Hộ dùng vị trí khi bạn chọn điểm đón hoặc chủ động chia sẻ GPS cho chuyến đang chạy.",
+        isIosBackgroundLocationEnabled: false,
+        isAndroidBackgroundLocationEnabled: false,
+        isAndroidForegroundServiceEnabled: false,
+      },
+    ],
+    [
       "expo-audio",
       {
-        microphonePermission: "Allow $(PRODUCT_NAME) to access your microphone.",
+        microphonePermission:
+          "Allow $(PRODUCT_NAME) to access your microphone.",
       },
     ],
     [

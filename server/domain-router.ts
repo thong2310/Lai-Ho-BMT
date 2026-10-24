@@ -58,6 +58,8 @@ const DOMAIN_MESSAGES: Record<string, string> = {
   "Only verified drivers can be available": "Chỉ tài xế đã xác minh mới có thể khả dụng",
   "Pricing values are outside the allowed limits": "Giá trị bảng giá vượt giới hạn cho phép",
   "Driver has active rides that must be reassigned before this action": "Cần điều phối lại các cuốc đang hoạt động trước khi từ chối hoặc tạm khóa tài xế",
+  "Invalid route token": "Mã lộ trình không hợp lệ hoặc đã hết hạn",
+  "Route endpoints do not match booking labels": "Điểm đón và điểm trả không khớp với lộ trình đã xác nhận",
 };
 
 function domainError(error: unknown): never {
@@ -76,7 +78,7 @@ function domainUser(user: NonNullable<Parameters<typeof domain.getWorkspace>[0]>
 
 export const bookingRouter = router({
   quote: publicProcedure
-    .input(z.object({ distanceKm, scheduledAt, vehicleType }))
+    .input(z.object({ distanceKm, scheduledAt, vehicleType, routeToken: z.string().trim().min(1).max(16_384).optional() }))
     .query(async ({ input }) => {
       try {
         return await domain.quoteBooking(input);
@@ -102,6 +104,7 @@ export const bookingRouter = router({
         vehicleType,
         phone,
         note: z.string().trim().max(1000).default(""),
+        routeToken: z.string().trim().min(1).max(16_384).optional(),
       }).refine((value) => value.pickup.localeCompare(value.dropoff, undefined, { sensitivity: "accent" }) !== 0, "Điểm đón và điểm trả phải khác nhau"),
     )
     .mutation(async ({ ctx, input }) => {

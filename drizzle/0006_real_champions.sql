@@ -1,0 +1,1 @@
+ALTER TABLE `rides` ADD `gpsSessionId` varchar(64);

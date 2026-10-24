@@ -34,6 +34,8 @@ import {
   VEHICLES,
 } from "@/shared/domain";
 import { trpc } from "@/lib/trpc";
+import { RideTracking } from "@/components/laiho/RideTracking";
+import { RidePayment } from "@/components/laiho/RidePayment";
 import { RideDetail } from "./RideDetail";
 
 type Props = {
@@ -614,6 +616,13 @@ export function DriverWorkspace({ data, demo, onLogin, tab }: Props) {
               disabled={!NEXT_STATUS[activeRide.status] || advance.isPending}
             />
           </View>
+          <RideTracking
+            ride={activeRide}
+            demo={demo}
+            allowShare
+            trackEnabled
+          />
+          <RidePayment ride={activeRide} demo={demo} readOnly />
         </Card>
       ) : (
         <Card style={styles.emptyHero}>
@@ -780,7 +789,12 @@ export function DriverWorkspace({ data, demo, onLogin, tab }: Props) {
               </Pressable>
             </View>
             {selectedRide ? (
-              <RideDetail ride={selectedRide} events={data.events} />
+              <RideDetail
+                ride={selectedRide}
+                events={data.events}
+                demo={demo}
+                trackEnabled={selectedRide.driverId === profile?.id}
+              />
             ) : null}
           </View>
         </View>

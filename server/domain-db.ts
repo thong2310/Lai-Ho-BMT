@@ -1,8 +1,10 @@
 import { and, asc, desc, eq, inArray, ne, or, sql } from "drizzle-orm";
 import type { Pricing, Driver, Offer, Quote, Ride, RideEvent, RideStatus, Verification, VehicleType, Workspace } from "../shared/domain";
 import { DEFAULT_PRICING } from "../shared/domain";
-import { drivers, offers, pricingSettings, rideEvents, rides, users, type DriverRow, type RideRow } from "../drizzle/schema";
+import type { RideRoute } from "../shared/mobility";
+import { drivers, offers, pricingSettings, rideEvents, rideLocations, rides, users, type DriverRow, type RideRow } from "../drizzle/schema";
 import { getDb } from "./db";
+import { verifyRouteToken } from "./maps/token";
 import { calculateQuote } from "./services/quote";
 import {
   ACTIVE_RIDE_STATUSES,
@@ -71,6 +73,17 @@ function mapDriver(row: DriverRow): Driver {
   };
 }
 
+export function mapRideRoute(row: Pick<RideRow, "pickupLat" | "pickupLng" | "dropoffLat" | "dropoffLng" | "routePolyline" | "routeDurationSeconds" | "routeSource">): RideRoute | null {
+  if (row.routeSource !== "google_maps" || row.pickupLat === null || row.pickupLng === null || row.dropoffLat === null || row.dropoffLng === null || !row.routePolyline || row.routeDurationSeconds === null) return null;
+  return {
+    pickup: { lat: Number(row.pickupLat), lng: Number(row.pickupLng) },
+    dropoff: { lat: Number(row.dropoffLat), lng: Number(row.dropoffLng) },
+    polyline: row.routePolyline,
+    durationSeconds: row.routeDurationSeconds,
+    source: "google_maps",
+  };
+}
+
 function mapRide(row: RideRow): Ride {
   return {
     id: row.id,
@@ -91,6 +104,7 @@ function mapRide(row: RideRow): Ride {
     customerName: row.customerName,
     driverName: row.driverName,
     createdAt: iso(row.createdAt),
+    route: mapRideRoute(row),
   };
 }
 
@@ -110,12 +124,17 @@ export async function getPricing(): Promise<Pricing> {
   return mapPricing(row);
 }
 
-export async function quoteBooking(input: { distanceKm: number; scheduledAt: string; vehicleType: VehicleType }): Promise<Quote> {
-  return calculateQuote(await getPricing(), input);
+export async function quoteBooking(input: { distanceKm: number; scheduledAt: string; vehicleType: VehicleType; routeToken?: string }): Promise<Quote> {
+  const distanceKm = input.routeToken ? verifyRouteToken(input.routeToken).distanceKm : input.distanceKm;
+  return calculateQuote(await getPricing(), { ...input, distanceKm });
 }
 
 async function addEvent(db: Executor, rideId: number | null, message: string, user: DomainUser): Promise<void> {
   await db.insert(rideEvents).values({ rideId, message, actorName: actorName(user) });
+}
+
+async function stopRideLocation(db: Executor, rideId: number): Promise<void> {
+  await db.update(rideLocations).set({ sharing: false }).where(eq(rideLocations.rideId, rideId));
 }
 
 async function findRide(db: Executor, rideId: number, lock = false): Promise<RideRow> {
@@ -156,14 +175,17 @@ async function activeRideForDriver(db: Executor, driverId: number, excludeRideId
 
 export async function createBooking(
   user: DomainUser,
-  input: { pickup: string; dropoff: string; zone: string; distanceKm: number; scheduledAt: string; vehicleType: VehicleType; phone: string; note: string },
+  input: { pickup: string; dropoff: string; zone: string; distanceKm: number; scheduledAt: string; vehicleType: VehicleType; phone: string; note: string; routeToken?: string },
 ): Promise<Ride> {
   const pickup = input.pickup.trim();
   const dropoff = input.dropoff.trim();
   if (pickup.localeCompare(dropoff, undefined, { sensitivity: "accent" }) === 0) throw new Error("Pickup and dropoff must be different");
+  const route = input.routeToken ? verifyRouteToken(input.routeToken) : null;
+  if (route && (route.pickup.label !== pickup || route.dropoff.label !== dropoff)) throw new Error("Route endpoints do not match booking labels");
+  const serverDistanceKm = route?.distanceKm ?? input.distanceKm;
   const db = await requireDb();
   const pricing = await getPricing();
-  const quote = calculateQuote(pricing, input);
+  const quote = calculateQuote(pricing, { distanceKm: serverDistanceKm, scheduledAt: input.scheduledAt, vehicleType: input.vehicleType });
   const code = `LXH-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 7).toUpperCase()}`;
   return db.transaction(async (tx) => {
     const result = await tx.insert(rides).values({
@@ -171,6 +193,13 @@ export async function createBooking(
       customerId: user.id,
       pickup,
       dropoff,
+      pickupLat: route?.pickup.lat ?? null,
+      pickupLng: route?.pickup.lng ?? null,
+      dropoffLat: route?.dropoff.lat ?? null,
+      dropoffLng: route?.dropoff.lng ?? null,
+      routePolyline: route?.polyline ?? null,
+      routeDurationSeconds: route?.durationSeconds ?? null,
+      routeSource: route ? "google_maps" : "manual",
       zone: input.zone.trim(),
       distanceKm: quote.distanceKm,
       scheduledAt: new Date(input.scheduledAt),
@@ -194,7 +223,8 @@ export async function cancelBooking(user: DomainUser, rideId: number): Promise<R
     const ride = await findRide(tx, rideId, true);
     if (user.role !== "admin" && ride.customerId !== user.id) throw new Error("You cannot cancel this ride");
     if (!canCancelRide(ride.status as RideStatus)) throw new Error("This ride cannot be cancelled");
-    await tx.update(rides).set({ status: "cancelled" }).where(eq(rides.id, rideId));
+    await tx.update(rides).set({ status: "cancelled", gpsSessionId: null }).where(eq(rides.id, rideId));
+    await stopRideLocation(tx, rideId);
     await tx.update(offers).set({ status: "expired" }).where(and(eq(offers.rideId, rideId), eq(offers.status, "sent")));
     await addEvent(tx, rideId, "Cuốc đã được hủy", user);
     return mapRide({ ...ride, status: "cancelled" });
@@ -288,7 +318,11 @@ export async function advanceRide(user: DomainUser, rideId: number): Promise<Rid
     const next = nextRideStatus(ride.status as RideStatus);
     if (!next || !canAdvanceRide(ride.status as RideStatus)) throw new Error("Invalid ride transition");
     await tx.update(rides).set({ status: next }).where(eq(rides.id, rideId));
-    if (next === "completed") await tx.update(drivers).set({ trips: sql`${drivers.trips} + 1` }).where(eq(drivers.id, driver.id));
+    if (next === "completed") {
+      await tx.update(drivers).set({ trips: sql`${drivers.trips} + 1` }).where(eq(drivers.id, driver.id));
+      await tx.update(rides).set({ gpsSessionId: null }).where(eq(rides.id, rideId));
+    }
+    if (next === "completed") await stopRideLocation(tx, rideId);
     await addEvent(tx, rideId, `Cuốc chuyển sang trạng thái ${RIDE_STATUS_LABELS[next]}`, user);
     return mapRide({ ...ride, status: next });
   });
@@ -315,7 +349,8 @@ export async function dispatchRide(user: DomainUser, rideId: number, driverIds: 
       await addEvent(tx, rideId, `Admin đã thu hồi tài xế ${oldDriver.name} để điều phối lại`, user);
     }
     await tx.update(offers).set({ status: "expired" }).where(and(eq(offers.rideId, rideId), inArray(offers.status, ["sent", "accepted"])));
-    await tx.update(rides).set({ driverId: null, driverName: null, status: "offered" }).where(eq(rides.id, rideId));
+    await stopRideLocation(tx, rideId);
+    await tx.update(rides).set({ driverId: null, driverName: null, status: "offered", gpsSessionId: null }).where(eq(rides.id, rideId));
     const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
     const offerIds: number[] = [];
     for (const driverId of uniqueIds) {

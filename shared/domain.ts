@@ -1,10 +1,12 @@
+import type { RideRoute } from "./mobility";
+
 export type RideStatus = 'pending' | 'offered' | 'accepted' | 'arriving' | 'met' | 'in_progress' | 'completed' | 'cancelled';
 export type Verification = 'pending' | 'verified' | 'rejected' | 'suspended';
 export type VehicleType = 'automatic' | 'manual' | 'luxury';
 export type ViewRole = 'customer' | 'driver' | 'admin';
 export interface Pricing { baseFare: number; perKm: number; minFare: number; nightFee: number; peakFee: number; commissionPercent: number }
 export interface Quote { baseFare: number; distanceFare: number; nightFee: number; peakFee: number; vehicleFee: number; minAdjustment: number; total: number; driverIncome: number; distanceKm: number; estimatedMinutes: number }
-export interface Ride { id: number; code: string; customerId: number; driverId: number | null; pickup: string; dropoff: string; zone: string; distanceKm: number; scheduledAt: string; vehicleType: VehicleType; phone: string; note: string; price: number; driverIncome: number; status: RideStatus; customerName: string; driverName: string | null; createdAt: string }
+export interface Ride { id: number; code: string; customerId: number; driverId: number | null; pickup: string; dropoff: string; zone: string; distanceKm: number; scheduledAt: string; vehicleType: VehicleType; phone: string; note: string; price: number; driverIncome: number; status: RideStatus; customerName: string; driverName: string | null; createdAt: string; route?: RideRoute | null }
 export interface Driver { id: number; userId: number; name: string; phone: string; zone: string; experience: number; licenseNumber: string; documentNote: string; vehiclePlate: string; verification: Verification; rejectionReason: string | null; available: boolean; rating: number; trips: number; createdAt: string }
 export interface Offer { id: number; rideId: number; driverId: number; status: 'sent' | 'accepted' | 'rejected' | 'expired'; expiresAt: string; ride: Ride }
 export interface RideEvent { id: number; rideId: number | null; message: string; actorName: string; createdAt: string }

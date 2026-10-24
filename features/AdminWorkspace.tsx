@@ -667,9 +667,13 @@ export function AdminWorkspace({ data, demo, onLogin, tab }: Props) {
             />
             {selectedRide ? (
               <RideDetail
-                ride={selectedRide}
+                ride={
+                  data.rides.find((ride) => ride.id === selectedRide.id) ??
+                  selectedRide
+                }
                 events={events}
                 offers={data.offers}
+                demo={demo}
               />
             ) : null}
           </View>

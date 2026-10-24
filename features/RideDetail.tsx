@@ -2,6 +2,8 @@ import { useState } from "react";
 import { ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { Card, COLORS, Icon, Pill, RouteLine } from "@/components/laiho/ui";
+import { RideTracking } from "@/components/laiho/RideTracking";
+import { RidePayment } from "@/components/laiho/RidePayment";
 import {
   formatDate,
   formatMoney,
@@ -11,7 +13,14 @@ import {
   type RideEvent,
 } from "@/shared/domain";
 
-type Props = { ride: Ride; events: RideEvent[]; offers?: Offer[] };
+type Props = {
+  ride: Ride;
+  events: RideEvent[];
+  offers?: Offer[];
+  demo?: boolean;
+  trackEnabled?: boolean;
+  paymentReadOnly?: boolean;
+};
 
 const tone = (
   status: Ride["status"],
@@ -22,7 +31,14 @@ const tone = (
   return "blue";
 };
 
-export function RideDetail({ ride, events, offers = [] }: Props) {
+export function RideDetail({
+  ride,
+  events,
+  offers = [],
+  demo = false,
+  trackEnabled = true,
+  paymentReadOnly = true,
+}: Props) {
   const [now] = useState(Date.now);
   const rideEvents = events
     .filter((event) => event.rideId === ride.id)
@@ -71,6 +87,12 @@ export function RideDetail({ ride, events, offers = [] }: Props) {
           <Meta label="Giá cuốc" value={formatMoney(ride.price)} />
         </View>
       </Card>
+      {trackEnabled ? (
+        <RideTracking ride={ride} demo={demo} trackEnabled allowShare={false} />
+      ) : null}
+      {trackEnabled ? (
+        <RidePayment ride={ride} demo={demo} readOnly={paymentReadOnly} />
+      ) : null}
       <View style={styles.gpsNote}>
         <Icon name="location-outline" size={18} color="#3477BF" />
         <Text style={styles.gpsText}>

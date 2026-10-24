@@ -61,8 +61,16 @@ export const rides = mysqlTable(
     code: varchar("code", { length: 40 }).notNull().unique(),
     customerId: int("customerId").notNull(),
     driverId: int("driverId"),
+    gpsSessionId: varchar("gpsSessionId", { length: 64 }),
     pickup: text("pickup").notNull(),
     dropoff: text("dropoff").notNull(),
+    pickupLat: double("pickupLat"),
+    pickupLng: double("pickupLng"),
+    dropoffLat: double("dropoffLat"),
+    dropoffLng: double("dropoffLng"),
+    routePolyline: text("routePolyline"),
+    routeDurationSeconds: int("routeDurationSeconds"),
+    routeSource: mysqlEnum("routeSource", ["manual", "google_maps"]).notNull().default("manual"),
     zone: varchar("zone", { length: 120 }).notNull(),
     distanceKm: double("distanceKm").notNull(),
     scheduledAt: timestamp("scheduledAt").notNull(),
@@ -97,6 +105,28 @@ export const rides = mysqlTable(
 
 export type RideRow = typeof rides.$inferSelect;
 export type InsertRide = typeof rides.$inferInsert;
+
+export const rideLocations = mysqlTable(
+  "ride_locations",
+  {
+    rideId: int("rideId").primaryKey(),
+    driverId: int("driverId").notNull(),
+    userId: int("userId").notNull(),
+    lat: double("lat").notNull(),
+    lng: double("lng").notNull(),
+    accuracy: double("accuracy"),
+    capturedAt: timestamp("capturedAt").notNull(),
+    receivedAt: timestamp("receivedAt").defaultNow().notNull(),
+    sharing: boolean("sharing").notNull().default(true),
+  },
+  (table) => [
+    index("ride_locations_driver_idx").on(table.driverId),
+    index("ride_locations_received_idx").on(table.receivedAt),
+  ],
+);
+
+export type RideLocationRow = typeof rideLocations.$inferSelect;
+export type InsertRideLocation = typeof rideLocations.$inferInsert;
 
 export const offers = mysqlTable(
   "offers",
