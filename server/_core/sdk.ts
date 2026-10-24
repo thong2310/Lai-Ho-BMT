@@ -7,6 +7,7 @@ import type { User } from "../../drizzle/schema";
 import * as db from "../db";
 import { ENV } from "./env";
 import { currentSessionCookie } from "./cookies";
+import { decodeOAuthState } from "./oauth-state";
 import type {
   ExchangeTokenRequest,
   ExchangeTokenResponse,
@@ -39,11 +40,15 @@ class OAuthService {
   }
 
   private decodeState(state: string): string {
-    const redirectUri = atob(state);
-    return redirectUri;
+    const decoded = decodeOAuthState(state);
+    if (!decoded) throw new Error("Invalid OAuth state");
+    return decoded.redirectUri;
   }
 
-  async getTokenByCode(code: string, state: string): Promise<ExchangeTokenResponse> {
+  async getTokenByCode(
+    code: string,
+    state: string,
+  ): Promise<ExchangeTokenResponse> {
     const payload: ExchangeTokenRequest = {
       clientId: ENV.appId,
       grantType: "authorization_code",
@@ -51,15 +56,23 @@ class OAuthService {
       redirectUri: this.decodeState(state),
     };
 
-    const { data } = await this.client.post<ExchangeTokenResponse>(EXCHANGE_TOKEN_PATH, payload);
+    const { data } = await this.client.post<ExchangeTokenResponse>(
+      EXCHANGE_TOKEN_PATH,
+      payload,
+    );
 
     return data;
   }
 
-  async getUserInfoByToken(token: ExchangeTokenResponse): Promise<GetUserInfoResponse> {
-    const { data } = await this.client.post<GetUserInfoResponse>(GET_USER_INFO_PATH, {
-      accessToken: token.accessToken,
-    });
+  async getUserInfoByToken(
+    token: ExchangeTokenResponse,
+  ): Promise<GetUserInfoResponse> {
+    const { data } = await this.client.post<GetUserInfoResponse>(
+      GET_USER_INFO_PATH,
+      {
+        accessToken: token.accessToken,
+      },
+    );
 
     return data;
   }
@@ -86,11 +99,16 @@ class SDKServer {
   ): string | null {
     if (fallback && fallback.length > 0) return fallback;
     if (!Array.isArray(platforms) || platforms.length === 0) return null;
-    const set = new Set<string>(platforms.filter((p): p is string => typeof p === "string"));
+    const set = new Set<string>(
+      platforms.filter((p): p is string => typeof p === "string"),
+    );
     if (set.has("REGISTERED_PLATFORM_EMAIL")) return "email";
     if (set.has("REGISTERED_PLATFORM_GOOGLE")) return "google";
     if (set.has("REGISTERED_PLATFORM_APPLE")) return "apple";
-    if (set.has("REGISTERED_PLATFORM_MICROSOFT") || set.has("REGISTERED_PLATFORM_AZURE"))
+    if (
+      set.has("REGISTERED_PLATFORM_MICROSOFT") ||
+      set.has("REGISTERED_PLATFORM_AZURE")
+    )
       return "microsoft";
     if (set.has("REGISTERED_PLATFORM_GITHUB")) return "github";
     const first = Array.from(set)[0];
@@ -102,7 +120,10 @@ class SDKServer {
    * @example
    * const tokenResponse = await sdk.exchangeCodeForToken(code, state);
    */
-  async exchangeCodeForToken(code: string, state: string): Promise<ExchangeTokenResponse> {
+  async exchangeCodeForToken(
+    code: string,
+    state: string,
+  ): Promise<ExchangeTokenResponse> {
     return this.oauthService.getTokenByCode(code, state);
   }
 
@@ -184,7 +205,12 @@ class SDKServer {
       });
       const { openId, appId, name } = payload as Record<string, unknown>;
 
-      if (!isNonEmptyString(openId) || !isNonEmptyString(appId) || !isNonEmptyString(name)) {
+      if (
+        !isNonEmptyString(openId) ||
+        !isNonEmptyString(appId) ||
+        appId !== ENV.appId ||
+        !isNonEmptyString(name)
+      ) {
         console.warn("[Auth] Session payload missing required fields");
         return null;
       }
@@ -200,7 +226,9 @@ class SDKServer {
     }
   }
 
-  async getUserInfoWithJwt(jwtToken: string): Promise<GetUserInfoWithJwtResponse> {
+  async getUserInfoWithJwt(
+    jwtToken: string,
+  ): Promise<GetUserInfoWithJwtResponse> {
     const payload: GetUserInfoWithJwtRequest = {
       jwtToken,
       projectId: ENV.appId,
@@ -289,7 +317,9 @@ export type AuthenticatedUser = User & {
   isCron?: boolean;
 };
 
-function buildCronUser(userInfo: GetUserInfoWithJwtResponse): AuthenticatedUser {
+function buildCronUser(
+  userInfo: GetUserInfoWithJwtResponse,
+): AuthenticatedUser {
   const now = new Date();
   return {
     id: -1,

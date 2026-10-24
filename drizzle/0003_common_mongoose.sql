@@ -1,0 +1,1 @@
+ALTER TABLE `drivers` MODIFY COLUMN `rating` double NOT NULL DEFAULT 0;

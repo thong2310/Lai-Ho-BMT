@@ -8,6 +8,27 @@
       "when": 1763372440610,
       "tag": "0000_elite_eternals",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "5",
+      "when": 1792868098956,
+      "tag": "0001_unique_rictor",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1792868136711,
+      "tag": "0002_parched_millenium_guard",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "5",
+      "when": 1792868660076,
+      "tag": "0003_common_mongoose",
+      "breakpoints": true
     }
   ]
 }
