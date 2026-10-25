@@ -24,3 +24,10 @@ Chưa thực hiện vòng OAuth nhà cung cấp thật, kiểm thử điện tho
 TypeScript sạch; 83/83 unit test trong 13 tệp qua; ESLint các tệp TypeScript đã thay đổi/tạo mới không có lỗi/cảnh báo mã. Export Expo Web có trang payment return và backend build qua; HTTP Web/health 200. Maps browser script dùng frontend origin HTTP 200, Directions/quãng đường thật, báo giá server dùng km đã ký và từ chối token sửa HTTP 400; GPS chưa đăng nhập HTTP 401. Migration 0004/0005/0006 đã áp dụng và drizzle-kit check qua. Read-only validator đã truy vết các vai trò; lỗi map origin và origin thanh toán thứ hai đã được sửa với test hồi quy. Phiên GPS server thu hồi token khi dừng, nên request cũ không bật lại chia sẻ.
 
 Mã UI/API/HMAC/IPN VNPay đã tích hợp; cổng chưa hoạt động do form merchant bị người dùng hủy và chưa có TMN Code/Hash Secret. Thanh toán còn mở để phản ánh việc chưa kích hoạt/chưa chạy checkout-IPN sandbox end-to-end, không mở lại form tự động. Không thử GPS/native trên điện thoại vật lý; không thu tiền live, GPS nền, payout/refund. Bàn giao còn chờ thẻ xác nhận checkpoint, source được chuẩn bị để push canonical main; chưa publish.
+
+## Tài khoản nội bộ (không Manus OAuth)
+
+- [x] **Khách hàng:** trang tài khoản có luồng đăng nhập và tạo tài khoản email/mật khẩu riêng; email chuẩn hóa, mật khẩu tối thiểu 8 ký tự, scrypt + salt, session Web/native riêng; không trả password hash.
+- [x] **Tài xế:** trang tài khoản có đăng nhập và đăng ký tài xế riêng; đăng ký không tự cấp admin và hồ sơ tài xế vẫn chờ duyệt vận hành.
+- [x] **Quản trị:** chỉ có đăng nhập admin, không có đăng ký admin công khai; trang Tài khoản hiển thị hồ sơ thật, đăng xuất và đổi mật khẩu. Bootstrap admin một lần qua secret `LOCAL_ADMIN_*` đã được nhập bảo mật; không chứa bí mật trong repo.
+- [x] **Phân quyền/bảo mật:** API chỉ chấp nhận session local ký bằng `LOCAL_AUTH_SESSION_SECRET`; web cookie `__Host-laiho_session_*` hợp lệ Preview HTTPS, native Bearer/SecureStore; admin procedures vẫn server guard. OAuth app route không còn đăng ký trong API runtime.

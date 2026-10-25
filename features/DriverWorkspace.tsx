@@ -106,7 +106,7 @@ function LoginRequired({ onLogin }: { onLogin: () => void }) {
         Đăng nhập để xem hồ sơ, cuốc chờ và thu nhập của bạn.
       </Text>
       <Button
-        title="Đăng nhập với Manus"
+        title="Đăng nhập tài khoản nội bộ"
         onPress={onLogin}
         icon="arrow-forward"
       />
@@ -616,12 +616,7 @@ export function DriverWorkspace({ data, demo, onLogin, tab }: Props) {
               disabled={!NEXT_STATUS[activeRide.status] || advance.isPending}
             />
           </View>
-          <RideTracking
-            ride={activeRide}
-            demo={demo}
-            allowShare
-            trackEnabled
-          />
+          <RideTracking ride={activeRide} demo={demo} allowShare trackEnabled />
           <RidePayment ride={activeRide} demo={demo} readOnly />
         </Card>
       ) : (

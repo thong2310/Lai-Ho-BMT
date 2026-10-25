@@ -2,12 +2,10 @@ import { Platform } from "react-native";
 import { getApiBaseUrl } from "@/constants/oauth";
 import * as Auth from "./auth";
 
-type ApiResponse<T> = {
-  data?: T;
-  error?: string;
-};
-
-export async function apiCall<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+export async function apiCall<T>(
+  endpoint: string,
+  options: RequestInit = {},
+): Promise<T> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     ...((options.headers as Record<string, string>) || {}),
@@ -52,7 +50,9 @@ export async function apiCall<T>(endpoint: string, options: RequestInit = {}): P
       } catch {
         // Not JSON, use text as is
       }
-      throw new Error(errorMessage || `API call failed: ${response.statusText}`);
+      throw new Error(
+        errorMessage || `API call failed: ${response.statusText}`,
+      );
     }
 
     const contentType = response.headers.get("content-type");
@@ -72,29 +72,6 @@ export async function apiCall<T>(endpoint: string, options: RequestInit = {}): P
     }
     throw new Error("Unknown error occurred");
   }
-}
-
-// OAuth callback handler - exchange code for session token
-// Calls /api/oauth/mobile endpoint which returns JSON with app_session_id and user
-export async function exchangeOAuthCode(
-  code: string,
-  state: string,
-): Promise<{ sessionToken: string; user: any }> {
-  console.log("[API] exchangeOAuthCode called");
-  // Use GET with query params
-  const params = new URLSearchParams({ code, state });
-  const endpoint = `/api/oauth/mobile?${params.toString()}`;
-  console.log("[API] Calling OAuth mobile endpoint");
-  const result = await apiCall<{ app_session_id: string; user: any }>(endpoint);
-
-  // Convert app_session_id to sessionToken for compatibility
-  const sessionToken = result.app_session_id;
-  console.log("[API] OAuth exchange completed");
-
-  return {
-    sessionToken,
-    user: result.user,
-  };
 }
 
 // Logout

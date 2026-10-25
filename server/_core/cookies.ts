@@ -59,8 +59,8 @@ function legacyParentDomain(hostname: string): string | null {
 
 export function getSessionCookieName(req: Request): string {
   return isSecureRequest(req)
-    ? `__Host-manus_session_${SESSION_COOKIE_SUFFIX}`
-    : `manus_local_session_${SESSION_COOKIE_SUFFIX}`;
+    ? `__Host-laiho_session_${SESSION_COOKIE_SUFFIX}`
+    : `laiho_local_session_${SESSION_COOKIE_SUFFIX}`;
 }
 
 export function getOAuthStateCookieName(req: Request): string {

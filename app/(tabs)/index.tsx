@@ -14,12 +14,13 @@ import Head from "expo-router/head";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { trpc } from "@/lib/trpc";
-import { startOAuthLogin } from "@/constants/oauth";
 import * as Auth from "@/lib/_core/auth";
 import { Button, COLORS, Icon, Notice, Pill } from "@/components/laiho/ui";
 import { CustomerWorkspace } from "@/features/CustomerWorkspace";
 import { DriverWorkspace } from "@/features/DriverWorkspace";
 import { AdminWorkspace } from "@/features/AdminWorkspace";
+import { AdminAccountWorkspace } from "@/features/AdminAccountWorkspace";
+import { LocalAuthPanel } from "@/features/LocalAuthPanel";
 import { PaymentsHistory } from "@/features/PaymentsHistory";
 import { getDemoWorkspace } from "@/lib/demo";
 import type { ViewRole } from "@/shared/domain";
@@ -48,6 +49,7 @@ const MENUS: Record<ViewRole, MenuItem[]> = {
     { id: "drivers", title: "Quản lý tài xế", icon: "people-outline" },
     { id: "pricing", title: "Cấu hình giá", icon: "options-outline" },
     { id: "activity", title: "Nhật ký vận hành", icon: "time-outline" },
+    { id: "account", title: "Tài khoản", icon: "person-circle-outline" },
   ],
 };
 for (const role of ["customer", "driver", "admin"] as const)
@@ -109,8 +111,11 @@ export default function HomeScreen() {
   const [selectedRole, setRole] = useState<ViewRole | null>(null);
   const [selectedTab, setTab] = useState<string | null>(null);
   const [demoRequested, setDemoRequested] = useState(false);
+  const [authPanelRole, setAuthPanelRole] = useState<ViewRole>("customer");
+  const [authPanelVisible, setAuthPanelVisible] = useState(false);
   const [message, setMessage] = useState("");
   const user = auth.data;
+  const accountRole = user?.role;
   const role: ViewRole =
     selectedRole ??
     (user?.role === "admin"
@@ -121,11 +126,13 @@ export default function HomeScreen() {
   const tab = selectedTab ?? MENUS[role][0].id;
   const hasRole =
     role === "customer" ||
-    (role === "admin" && user?.role === "admin") ||
-    (role === "driver" && !!user);
-  const demo = demoRequested || (role !== "customer" && (!user || !hasRole));
+    (role === "admin" && accountRole === "admin") ||
+    (role === "driver" && accountRole === "driver");
+  const demo =
+    role !== "admin" &&
+    (demoRequested || (role !== "customer" && (!user || !hasRole)));
   const snapshot = trpc.workspace.snapshot.useQuery(undefined, {
-    enabled: !!user && !demo,
+    enabled: !!user && !demo && hasRole,
     refetchInterval: 8000,
     retry: 1,
   });
@@ -154,23 +161,30 @@ export default function HomeScreen() {
       setDemoRequested(false);
     },
   });
-  async function login() {
+  function login(targetRole?: ViewRole) {
+    const nextRole =
+      targetRole === "customer" ||
+      targetRole === "driver" ||
+      targetRole === "admin"
+        ? targetRole
+        : role;
     setMessage("");
-    try {
-      await startOAuthLogin();
-    } catch (e) {
-      setMessage(
-        e instanceof Error
-          ? e.message
-          : "Chưa mở được đăng nhập. Vui lòng thử lại.",
-      );
-    }
+    setAuthPanelRole(nextRole);
+    setAuthPanelVisible(true);
   }
   function changeRole(next: ViewRole) {
     setRole(next);
     setTab(MENUS[next][0].id);
     setDemoRequested(false);
     setMessage("");
+    if (
+      next !== "customer" &&
+      (!user ||
+        (next === "admin" && accountRole !== "admin") ||
+        (next === "driver" && accountRole !== "driver"))
+    ) {
+      login(next);
+    }
   }
   const title =
     MENUS[role].find((menu) => menu.id === tab)?.title ?? "Đặt tài xế";
@@ -315,7 +329,7 @@ export default function HomeScreen() {
                 <Text
                   style={{ fontSize: 9, color: COLORS.muted, marginTop: 3 }}
                 >
-                  {user ? "Đăng nhập bằng Manus" : "Chưa đăng nhập"}
+                  {user ? "Tài khoản nội bộ" : "Chưa đăng nhập"}
                 </Text>
               </View>
             </View>
@@ -460,6 +474,11 @@ export default function HomeScreen() {
               onLogin={login}
               tab={tab}
             />
+          ) : tab === "account" ? (
+            <AdminAccountWorkspace
+              user={user}
+              onLogout={() => logout.mutate()}
+            />
           ) : (
             <AdminWorkspace data={data} demo={demo} onLogin={login} tab={tab} />
           )}
@@ -469,13 +488,15 @@ export default function HomeScreen() {
             </Text>
             <Pressable
               onPress={() => {
-                setDemoRequested(!demoRequested);
+                if (role !== "admin") setDemoRequested(!demoRequested);
               }}
             >
               <Text style={[s.footerText, { color: COLORS.primary }]}>
-                {demoRequested
-                  ? "Thoát dữ liệu minh họa"
-                  : "Xem dữ liệu minh họa"}
+                {role === "admin"
+                  ? "Tài khoản quản trị riêng"
+                  : demoRequested
+                    ? "Thoát dữ liệu minh họa"
+                    : "Xem dữ liệu minh họa"}
               </Text>
             </Pressable>
           </View>
@@ -511,6 +532,17 @@ export default function HomeScreen() {
           </View>
         )}
       </View>
+      {authPanelVisible ? (
+        <LocalAuthPanel
+          initialRole={authPanelRole}
+          onClose={() => setAuthPanelVisible(false)}
+          onSuccess={async () => {
+            setAuthPanelVisible(false);
+            setDemoRequested(false);
+            await utils.auth.me.invalidate();
+          }}
+        />
+      ) : null}
     </View>
   );
 }

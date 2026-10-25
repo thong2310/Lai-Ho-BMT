@@ -8,6 +8,7 @@ import * as db from "../db";
 import { ENV } from "./env";
 import { currentSessionCookie } from "./cookies";
 import { decodeOAuthState } from "./oauth-state";
+import { LOCAL_SESSION_APP_ID } from "../local-auth";
 import type {
   ExchangeTokenRequest,
   ExchangeTokenResponse,
@@ -23,6 +24,7 @@ export type SessionPayload = {
   openId: string;
   appId: string;
   name: string;
+  authSource?: "local" | "manus";
 };
 
 const EXCHANGE_TOKEN_PATH = `/webdev.v1.WebDevAuthPublicService/ExchangeToken`;
@@ -85,12 +87,19 @@ const createOAuthHttpClient = (): AxiosInstance =>
   });
 
 class SDKServer {
-  private readonly client: AxiosInstance;
-  private readonly oauthService: OAuthService;
+  private oauthService: OAuthService | null = null;
+  private oauthClient: AxiosInstance | null = null;
 
-  constructor(client: AxiosInstance = createOAuthHttpClient()) {
-    this.client = client;
-    this.oauthService = new OAuthService(this.client);
+  private getOAuthClient(): AxiosInstance {
+    if (!this.oauthClient) this.oauthClient = createOAuthHttpClient();
+    return this.oauthClient;
+  }
+
+  private getOAuthService(): OAuthService {
+    if (!this.oauthService) {
+      this.oauthService = new OAuthService(this.getOAuthClient());
+    }
+    return this.oauthService;
   }
 
   private deriveLoginMethod(
@@ -124,7 +133,7 @@ class SDKServer {
     code: string,
     state: string,
   ): Promise<ExchangeTokenResponse> {
-    return this.oauthService.getTokenByCode(code, state);
+    return this.getOAuthService().getTokenByCode(code, state);
   }
 
   /**
@@ -133,7 +142,7 @@ class SDKServer {
    * const userInfo = await sdk.getUserInfo(tokenResponse.accessToken);
    */
   async getUserInfo(accessToken: string): Promise<GetUserInfoResponse> {
-    const data = await this.oauthService.getUserInfoByToken({
+    const data = await this.getOAuthService().getUserInfoByToken({
       accessToken,
     } as ExchangeTokenResponse);
     const loginMethod = this.deriveLoginMethod(
@@ -150,6 +159,10 @@ class SDKServer {
   private getSessionSecret() {
     const secret = ENV.cookieSecret;
     return new TextEncoder().encode(secret);
+  }
+
+  private getLocalSessionSecret() {
+    return new TextEncoder().encode(ENV.localAuthSessionSecret);
   }
 
   /**
@@ -184,10 +197,61 @@ class SDKServer {
       openId: payload.openId,
       appId: payload.appId,
       name: payload.name,
+      ...(payload.authSource ? { authSource: payload.authSource } : {}),
     })
       .setProtectedHeader({ alg: "HS256", typ: "JWT" })
       .setExpirationTime(expirationSeconds)
       .sign(secretKey);
+  }
+
+  async signLocalSession(
+    openId: string,
+    options: { expiresInMs?: number; name?: string } = {},
+  ): Promise<string> {
+    const issuedAt = Date.now();
+    const expiresInMs = options.expiresInMs ?? ONE_YEAR_MS;
+    return new SignJWT({
+      openId,
+      appId: LOCAL_SESSION_APP_ID,
+      name: options.name || "local",
+      authSource: "local",
+    })
+      .setProtectedHeader({ alg: "HS256", typ: "JWT" })
+      .setExpirationTime(Math.floor((issuedAt + expiresInMs) / 1000))
+      .sign(this.getLocalSessionSecret());
+  }
+
+  async verifyLocalSession(cookieValue: string | undefined | null): Promise<{
+    openId: string;
+    appId: string;
+    name: string;
+    authSource: "local";
+  } | null> {
+    if (!cookieValue) return null;
+    try {
+      const { payload } = await jwtVerify(
+        cookieValue,
+        this.getLocalSessionSecret(),
+        {
+          algorithms: ["HS256"],
+        },
+      );
+      const { openId, appId, name, authSource } = payload as Record<
+        string,
+        unknown
+      >;
+      if (
+        !isNonEmptyString(openId) ||
+        appId !== LOCAL_SESSION_APP_ID ||
+        authSource !== "local" ||
+        !isNonEmptyString(name)
+      ) {
+        return null;
+      }
+      return { openId, appId, name, authSource };
+    } catch {
+      return null;
+    }
   }
 
   async verifySession(
@@ -234,10 +298,11 @@ class SDKServer {
       projectId: ENV.appId,
     };
 
-    const { data } = await this.client.post<GetUserInfoWithJwtResponse>(
-      GET_USER_INFO_WITH_JWT_PATH,
-      payload,
-    );
+    const { data } =
+      await this.getOAuthClient().post<GetUserInfoWithJwtResponse>(
+        GET_USER_INFO_WITH_JWT_PATH,
+        payload,
+      );
 
     const loginMethod = this.deriveLoginMethod(
       (data as any)?.platforms,
@@ -251,7 +316,6 @@ class SDKServer {
   }
 
   async authenticateRequest(req: Request): Promise<AuthenticatedUser> {
-    // Regular authentication flow
     const authHeader = req.headers.authorization || req.headers.Authorization;
     let token: string | undefined;
     if (typeof authHeader === "string" && authHeader.startsWith("Bearer ")) {
@@ -259,81 +323,20 @@ class SDKServer {
     }
 
     const sessionCookie = token || currentSessionCookie(req);
-    const session = await this.verifySession(sessionCookie);
-
-    if (!session) {
-      throw ForbiddenError("Invalid session cookie");
+    const localSession = await this.verifyLocalSession(sessionCookie);
+    if (localSession) {
+      const localUser = await db.getUserByOpenId(localSession.openId);
+      if (!localUser) throw ForbiddenError("User not found");
+      await db.upsertUser({
+        openId: localUser.openId,
+        lastSignedIn: new Date(),
+      });
+      return localUser;
     }
-
-    if (session.openId.startsWith(CRON_OPEN_ID_PREFIX)) {
-      const userInfo = await this.getUserInfoWithJwt(sessionCookie ?? "");
-      const taskUid = userInfo.taskUid ?? null;
-      if (!taskUid) {
-        throw ForbiddenError("Cron session missing task_uid");
-      }
-      return buildCronUser(userInfo);
-    }
-
-    const sessionUserId = session.openId;
-    const signedInAt = new Date();
-    let user = await db.getUserByOpenId(sessionUserId);
-
-    // If user not in DB, sync from OAuth server automatically
-    if (!user) {
-      try {
-        const userInfo = await this.getUserInfoWithJwt(sessionCookie ?? "");
-        await db.upsertUser({
-          openId: userInfo.openId,
-          name: userInfo.name || null,
-          email: userInfo.email ?? null,
-          loginMethod: userInfo.loginMethod ?? userInfo.platform ?? null,
-          lastSignedIn: signedInAt,
-        });
-        user = await db.getUserByOpenId(userInfo.openId);
-      } catch {
-        console.error("[Auth] Failed to sync user from OAuth");
-        throw ForbiddenError("Failed to sync user info");
-      }
-    }
-
-    if (!user) {
-      throw ForbiddenError("User not found");
-    }
-
-    await db.upsertUser({
-      openId: user.openId,
-      lastSignedIn: signedInAt,
-    });
-
-    return user;
+    throw ForbiddenError("Invalid local session");
   }
 }
 
-const CRON_OPEN_ID_PREFIX = "cron_";
-
-/** Result of `sdk.authenticateRequest`. Cron callbacks set `isCron=true` and `taskUid`; see `/home/ubuntu/skills/webdev-periodic-updates/SKILL.md`. */
-export type AuthenticatedUser = User & {
-  taskUid?: string;
-  isCron?: boolean;
-};
-
-function buildCronUser(
-  userInfo: GetUserInfoWithJwtResponse,
-): AuthenticatedUser {
-  const now = new Date();
-  return {
-    id: -1,
-    openId: userInfo.openId,
-    name: userInfo.name || "Manus Scheduled Task",
-    email: null,
-    loginMethod: null,
-    role: "user",
-    createdAt: now,
-    updatedAt: now,
-    lastSignedIn: now,
-    taskUid: userInfo.taskUid ?? undefined,
-    isCron: true,
-  } as AuthenticatedUser;
-}
+export type AuthenticatedUser = User;
 
 export const sdk = new SDKServer();

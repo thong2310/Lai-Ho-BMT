@@ -92,7 +92,7 @@ function LoginRequired({ onLogin }: { onLogin: () => void }) {
         cập nhật bảng giá.
       </Text>
       <Button
-        title="Đăng nhập với Manus"
+        title="Đăng nhập tài khoản nội bộ"
         onPress={onLogin}
         icon="arrow-forward"
       />

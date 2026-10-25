@@ -50,6 +50,13 @@
       "when": 1792884321290,
       "tag": "0006_real_champions",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "5",
+      "when": 1792885882394,
+      "tag": "0007_low_marvex",
+      "breakpoints": true
     }
   ]
 }

@@ -370,7 +370,7 @@ export function CustomerWorkspace({
               title="Đăng nhập để xem hành trình"
               subtitle="Dữ liệu chuyến chỉ dành cho người trong cuốc."
             />
-            <Button title="Đăng nhập bằng Manus" onPress={onLogin} />
+            <Button title="Đăng nhập tài khoản nội bộ" onPress={onLogin} />
           </Card>
         ) : data?.rides.length ? (
           data.rides.map((ride) => (
